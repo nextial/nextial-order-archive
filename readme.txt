@@ -1,4 +1,4 @@
-=== Nextial Order Archive – Archive Old Orders for WooCommerce (HPOS) ===
+=== Nextial Order Archive ===
 Contributors: nextial
 Tags: archive orders, old orders, hpos, database cleanup, woocommerce orders
 Requires at least: 6.5
@@ -8,7 +8,7 @@ Stable tag: 0.1.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Keep the WooCommerce Orders screen fast: archive old, finished orders automatically (HPOS), search them, and restore any order in one click.
+Archive old orders automatically and keep the WooCommerce Orders screen fast (HPOS). Search archived orders and restore any order in one click.
 
 == Description ==
 
