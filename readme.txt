@@ -1,6 +1,6 @@
-=== Nextial Order Archive for WooCommerce ===
+=== Nextial Order Archive – Archive Old Orders for WooCommerce (HPOS) ===
 Contributors: nextial
-Tags: woocommerce, archive orders, hpos, slow admin, old orders
+Tags: archive orders, old orders, hpos, database cleanup, woocommerce orders
 Requires at least: 6.5
 Tested up to: 7.1
 Requires PHP: 7.4
