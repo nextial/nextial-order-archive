@@ -10,6 +10,6 @@
 
 defined( 'WP_UNINSTALL_PLUGIN' ) || exit;
 
-foreach ( array( 'nextial_oa_rule', 'nextial_oa_run', 'nextial_oa_log' ) as $option ) {
-	delete_option( $option );
+foreach ( array( 'nextial_oa_rule', 'nextial_oa_run', 'nextial_oa_log' ) as $nextial_oa_option ) {
+	delete_option( $nextial_oa_option );
 }

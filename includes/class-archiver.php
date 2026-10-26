@@ -149,7 +149,7 @@ class Nextial_OA_Archiver {
 			$ids = array_map(
 				'intval',
 				$wpdb->get_col(
-					$wpdb->prepare(
+					$wpdb->prepare( // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- $in holds one %s per status, all passed in the array.
 						"SELECT id FROM {$orders} WHERE type = 'shop_order' AND status IN ({$in}) AND date_created_gmt < %s ORDER BY date_created_gmt ASC, id ASC LIMIT %d OFFSET %d",
 						array_merge( $wc_statuses, array( $cutoff, $chunk, $offset ) )
 					)
