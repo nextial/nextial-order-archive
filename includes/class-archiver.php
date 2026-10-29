@@ -144,27 +144,26 @@ class Nextial_OA_Archiver {
 		);
 		$keep     = array();
 		$offset   = 0;
-		$chunk    = 200;
+		$chunk    = 500;
+		$reason   = self::reason_sql();
 		while ( count( $keep ) < $limit && $offset < 100000 ) {
-			$ids = array_map(
-				'intval',
-				$wpdb->get_col(
-					$wpdb->prepare( // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber -- $in holds one %s per status, all passed in the array.
-						"SELECT id FROM {$orders} WHERE type = 'shop_order' AND status IN ({$in}) AND date_created_gmt < %s ORDER BY date_created_gmt ASC, id ASC LIMIT %d OFFSET %d",
-						array_merge( $wc_statuses, array( $cutoff, $chunk, $offset ) )
-					)
-				)
+			$rows = $wpdb->get_results(
+				$wpdb->prepare( // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $in holds one %s per status; $reason is built from table names and a prepared date.
+					"SELECT o.id, {$reason} AS reason FROM {$orders} o WHERE o.type = 'shop_order' AND o.status IN ({$in}) AND o.date_created_gmt < %s ORDER BY o.date_created_gmt ASC, o.id ASC LIMIT %d OFFSET %d",
+					array_merge( $wc_statuses, array( $cutoff, $chunk, $offset ) )
+				),
+				ARRAY_A
 			);
-			if ( empty( $ids ) ) {
+			if ( empty( $rows ) ) {
 				break;
 			}
-			foreach ( $ids as $id ) {
-				$reason = self::exclusion_reason( $id );
-				if ( $reason ) {
-					$excluded[ $reason ] = ( $excluded[ $reason ] ?? 0 ) + 1;
+			foreach ( $rows as $row ) {
+				$why = self::final_reason( (int) $row['id'], (string) $row['reason'] );
+				if ( $why ) {
+					$excluded[ $why ] = ( $excluded[ $why ] ?? 0 ) + 1;
 					continue;
 				}
-				$keep[] = $id;
+				$keep[] = (int) $row['id'];
 				if ( count( $keep ) >= $limit ) {
 					break;
 				}
@@ -175,6 +174,36 @@ class Nextial_OA_Archiver {
 			'ids'      => $keep,
 			'excluded' => $excluded,
 		);
+	}
+
+	/**
+	 * The built-in exclusion rules as one SQL expression on alias `o`
+	 * (same order as exclusion_reason()): 'subscription', 'restored',
+	 * 'downloads' or ''. One query for many orders instead of 3–4 per order.
+	 */
+	private static function reason_sql() {
+		global $wpdb;
+		$o    = $wpdb->prefix . 'wc_orders';
+		$m    = $wpdb->prefix . 'wc_orders_meta';
+		$perm = $wpdb->prefix . 'woocommerce_downloadable_product_permissions';
+		$sub  = "( EXISTS (SELECT 1 FROM `{$o}` s WHERE s.type = 'shop_subscription' AND s.parent_order_id = o.id) OR EXISTS (SELECT 1 FROM `{$m}` sm WHERE sm.order_id = o.id AND sm.meta_key IN ('_subscription_renewal','_subscription_resubscribe','_subscription_switch')) )";
+		$res  = "EXISTS (SELECT 1 FROM `{$m}` rm WHERE rm.order_id = o.id AND rm.meta_key = '_nextial_oa_restored')";
+		$dl   = '0';
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $perm ) ) === $perm ) {
+			$dl = $wpdb->prepare( "EXISTS (SELECT 1 FROM `{$perm}` d WHERE d.order_id = o.id AND ( d.access_expires IS NULL OR d.access_expires > %s ))", gmdate( 'Y-m-d H:i:s' ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		}
+		return "CASE WHEN {$sub} THEN 'subscription' WHEN {$res} THEN 'restored' WHEN {$dl} THEN 'downloads' ELSE '' END";
+	}
+
+	/**
+	 * Built-in reason from SQL, then the public filter for orders it allows.
+	 */
+	private static function final_reason( $order_id, $sql_reason ) {
+		if ( '' !== $sql_reason ) {
+			return $sql_reason;
+		}
+		/** This filter is documented in exclusion_reason(). */
+		return (string) apply_filters( 'nextial_oa_exclusion_reason', '', (int) $order_id );
 	}
 
 	/**
@@ -262,17 +291,21 @@ class Nextial_OA_Archiver {
 		);
 		$cutoff = gmdate( 'Y-m-d H:i:s', time() - max( 0, (int) ( $rule['older_than_days'] ?? 365 ) ) * DAY_IN_SECONDS );
 		$in     = implode( ',', array_fill( 0, count( $wc_statuses ), '%s' ) );
-		$ids    = $wpdb->get_col(
-			$wpdb->prepare(
-				"SELECT id FROM {$orders} WHERE type = 'shop_order' AND status IN ({$in}) AND date_created_gmt < %s ORDER BY date_created_gmt ASC LIMIT 20000",
+		$reason = self::reason_sql();
+		$rows   = $wpdb->get_results(
+			$wpdb->prepare( // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- see candidates().
+				"SELECT o.id, {$reason} AS reason FROM {$orders} o WHERE o.type = 'shop_order' AND o.status IN ({$in}) AND o.date_created_gmt < %s ORDER BY o.date_created_gmt ASC LIMIT 20000",
 				array_merge( $wc_statuses, array( $cutoff ) )
-			)
+			),
+			ARRAY_A
 		);
-		$out['total'] = count( $ids );
-		foreach ( $ids as $id ) {
-			$reason = self::exclusion_reason( $id );
-			if ( $reason ) {
-				$out['excluded'][ $reason ] = ( $out['excluded'][ $reason ] ?? 0 ) + 1;
+		$ids          = array();
+		$out['total'] = count( $rows );
+		foreach ( $rows as $row ) {
+			$ids[] = (int) $row['id'];
+			$why   = self::final_reason( (int) $row['id'], (string) $row['reason'] );
+			if ( $why ) {
+				$out['excluded'][ $why ] = ( $out['excluded'][ $why ] ?? 0 ) + 1;
 			} else {
 				++$out['archivable'];
 			}

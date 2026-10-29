@@ -90,6 +90,7 @@ class Nextial_OA_Admin {
 		$batch    = isset( $_POST['batch_size'] ) ? (int) $_POST['batch_size'] : 50;
 		$auto     = ! empty( $_POST['auto'] );
 		$preview  = ! empty( $_POST['preview'] );
+		$account  = ! empty( $_POST['myaccount'] );
 		// phpcs:enable
 		Nextial_OA_Runner::save_rule(
 			array(
@@ -99,6 +100,7 @@ class Nextial_OA_Admin {
 				'auto'            => $auto,
 			)
 		);
+		Nextial_OA_Account::set_enabled( $account );
 		if ( $preview ) {
 			set_transient( 'nextial_oa_preview_' . get_current_user_id(), Nextial_OA_Archiver::preview( Nextial_OA_Runner::rule() ), 600 );
 			self::done( 'info', __( 'Rule saved. Preview below: nothing was moved.', 'nextial-order-archive' ) );
@@ -146,6 +148,76 @@ class Nextial_OA_Admin {
 	/* Screen                                                              */
 	/* ------------------------------------------------------------------ */
 
+	/** Where to get the Pro add-on (filterable; Freemius checkout once it exists). */
+	public static function pro_url() {
+		return (string) apply_filters( 'nextial_oa_pro_url', 'https://nextial.it/order-archive/' );
+	}
+
+	/**
+	 * What Pro would do on THIS site, with its own numbers. Shown only on this
+	 * page and only while the Pro add-on is not active.
+	 */
+	public static function pro_facts() {
+		global $wpdb;
+		$o     = Nextial_OA_Archiver::archive_table( $wpdb->prefix . 'wc_orders' );
+		$facts = array( 'archived' => Nextial_OA_Archiver::archived_count(), 'bytes' => 0, 'old2' => 0, 'old10' => 0 );
+		if ( $facts['archived'] > 0 ) {
+			$names = array();
+			foreach ( Nextial_OA_Archiver::tables() as $t ) {
+				$names[] = esc_sql( Nextial_OA_Archiver::archive_table( $t['table'] ) );
+			}
+			$facts['bytes'] = (int) $wpdb->get_var( "SELECT COALESCE(SUM(data_length + index_length),0) FROM information_schema.TABLES WHERE table_schema = DATABASE() AND table_name IN ('" . implode( "','", $names ) . "')" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$facts['old2']  = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$o}` WHERE type = 'shop_order' AND date_created_gmt < %s", gmdate( 'Y-m-d H:i:s', strtotime( '-2 years' ) ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$facts['old10'] = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$o}` WHERE type = 'shop_order' AND date_created_gmt < %s", gmdate( 'Y-m-d H:i:s', strtotime( '-10 years' ) ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		}
+		return $facts;
+	}
+
+	private static function pro_box() {
+		if ( class_exists( 'Nextial_OAP_Cold' ) ) {
+			return; // Pro is active.
+		}
+		$f = self::pro_facts();
+		?>
+		<div style="border:1px solid #c3c4c7;border-left:4px solid #dba617;background:#fff;padding:10px 14px;margin:12px 0;max-width:1000px">
+			<p style="margin:0 0 6px"><strong><?php esc_html_e( 'Order Archive Pro', 'nextial-order-archive' ); ?></strong> –
+			<?php if ( $f['archived'] > 0 ) : ?>
+				<?php
+				/* translators: 1: size, 2: number of archived orders */
+				echo esc_html( sprintf( __( 'your archive tables take %1$s in the database (%2$s orders), and the same space in every database backup.', 'nextial-order-archive' ), size_format( $f['bytes'], 1 ), number_format_i18n( $f['archived'] ) ) );
+				?>
+			<?php else : ?>
+				<?php esc_html_e( 'for stores that want a smaller database and a clear data-retention policy.', 'nextial-order-archive' ); ?>
+			<?php endif; ?>
+			</p>
+			<ul style="margin:0 0 8px 18px;list-style:disc">
+				<li>
+				<?php
+				if ( $f['old2'] > 0 ) {
+					/* translators: %s: number of orders */
+					echo esc_html( sprintf( __( 'Cold storage: %s archived orders here are older than 2 years. Pro moves them out of the database into compressed files – still searchable, back in one click.', 'nextial-order-archive' ), number_format_i18n( $f['old2'] ) ) );
+				} else {
+					esc_html_e( 'Cold storage: old archived orders leave the database for compressed files – still searchable, back in one click.', 'nextial-order-archive' );
+				}
+				?>
+				</li>
+				<li>
+				<?php
+				if ( $f['old10'] > 0 ) {
+					/* translators: %s: number of orders */
+					echo esc_html( sprintf( __( 'Data retention: %s archived orders are older than 10 years. Pro anonymises or deletes them on schedule, skips orders on legal hold and keeps a log as proof.', 'nextial-order-archive' ), number_format_i18n( $f['old10'] ) ) );
+				} else {
+					esc_html_e( 'Data retention: anonymise or delete orders after the period you set, with legal hold and a log as proof.', 'nextial-order-archive' );
+				}
+				?>
+				</li>
+				<li><?php esc_html_e( 'WP-CLI commands and CSV export of the archive.', 'nextial-order-archive' ); ?></li>
+			</ul>
+			<a class="button button-secondary" href="<?php echo esc_url( self::pro_url() ); ?>" target="_blank" rel="noopener"><?php esc_html_e( 'See Order Archive Pro', 'nextial-order-archive' ); ?></a>
+		</div>
+		<?php
+	}
+
 	public static function render() {
 		if ( ! current_user_can( self::cap() ) ) {
 			return;
@@ -172,6 +244,7 @@ class Nextial_OA_Admin {
 		?>
 		<div class="wrap nextial-oa">
 			<h1><?php esc_html_e( 'Order Archive', 'nextial-order-archive' ); ?> <span style="font-size:13px;color:#646970">Nextial · v<?php echo esc_html( NEXTIAL_OA_VERSION ); ?></span></h1>
+			<?php self::pro_box(); ?>
 			<p><?php esc_html_e( 'Moves old, finished orders out of the live order tables into an archive, so the Orders screen and searches stay fast. Archived orders keep their ID, can be searched below and restored in one click. Reports (Analytics) keep their history.', 'nextial-order-archive' ); ?></p>
 
 			<?php if ( $notice ) : ?>
@@ -217,6 +290,10 @@ class Nextial_OA_Admin {
 					<tr>
 						<th scope="row"><?php esc_html_e( 'Automatic', 'nextial-order-archive' ); ?></th>
 						<td><label><input type="checkbox" name="auto" value="1" <?php checked( $rule['auto'] ); ?>> <?php esc_html_e( 'Run this rule every night at 3:00', 'nextial-order-archive' ); ?></label></td>
+					</tr>
+					<tr>
+						<th scope="row"><?php esc_html_e( 'Customers', 'nextial-order-archive' ); ?></th>
+						<td><label><input type="checkbox" name="myaccount" value="1" <?php checked( Nextial_OA_Account::enabled() ); ?>> <?php esc_html_e( 'Show an "Archived orders" tab in My Account, so customers still see their old orders (read-only)', 'nextial-order-archive' ); ?></label></td>
 					</tr>
 				</table>
 				<p>
@@ -316,6 +393,12 @@ class Nextial_OA_Admin {
 					</tbody>
 				</table>
 			<?php endif; ?>
+			<?php
+			/**
+			 * Add-ons (e.g. Nextial Order Archive Pro) add their tools here.
+			 */
+			do_action( 'nextial_oa_admin_after' );
+			?>
 		</div>
 		<?php
 	}
