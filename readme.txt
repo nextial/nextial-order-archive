@@ -4,7 +4,7 @@ Tags: archive orders, old orders, hpos, database cleanup, woocommerce orders
 Requires at least: 6.5
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.1.1
+Stable tag: 0.1.2
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -79,6 +79,9 @@ Each batch runs in one database transaction and every row count is checked befor
 4. Pro: archived orders found by the normal WooCommerce order search.
 
 == Changelog ==
+
+= 0.1.2 =
+* The "See Order Archive Pro" button now opens the secure checkout directly.
 
 = 0.1.1 =
 * New: "Archived orders" tab in My Account, so customers keep seeing their old orders (read-only, on by default, can be switched off).

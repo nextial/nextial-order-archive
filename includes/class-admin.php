@@ -150,7 +150,7 @@ class Nextial_OA_Admin {
 
 	/** Where to get the Pro add-on (filterable; Freemius checkout once it exists). */
 	public static function pro_url() {
-		return (string) apply_filters( 'nextial_oa_pro_url', 'https://nextial.it/order-archive/' );
+		return (string) apply_filters( 'nextial_oa_pro_url', 'https://checkout.freemius.com/plugin/43088/plan/75029/?billing_cycle=annual' );
 	}
 
 	/**
