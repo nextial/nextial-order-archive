@@ -7,6 +7,7 @@ Keeps the WooCommerce Orders screen fast: moves old, finished orders out of the 
 - Orders move with addresses, meta, items, notes and refunds; IDs stay reserved; Analytics untouched
 - Orders linked to subscriptions or with active downloads are never archived
 - Requires HPOS with compatibility mode off
+- Watch the 90-second setup tutorial on YouTube: https://youtu.be/QfCGkjeeZkA
 
 Page: https://nextial.it/order-archive/
 

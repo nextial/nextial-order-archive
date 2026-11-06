@@ -14,6 +14,8 @@ Archive old orders automatically and keep the WooCommerce Orders screen fast (HP
 
 Stores with years of orders get a slow Orders screen, slow searches and heavy database queries. Nextial Order Archive moves old, finished orders out of the live WooCommerce order tables into archive tables, so WooCommerce works on the orders that matter today.
 
+https://youtu.be/QfCGkjeeZkA
+
 * **Rules**: choose the statuses (completed, refunded, cancelled, failed…) and the age, for example "completed orders older than 12 months".
 * **Preview first**: see how many orders match, and which ones stay live, before anything moves.
 * **Background batches**: Action Scheduler moves small batches one after another, so the store never slows down. Stop at any time.
