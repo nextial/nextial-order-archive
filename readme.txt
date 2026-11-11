@@ -12,6 +12,8 @@ Archive old orders automatically and keep the WooCommerce Orders screen fast (HP
 
 == Description ==
 
+**Before you install, you need:** WooCommerce with **High-Performance Order Storage (HPOS)** turned on and **compatibility mode off** (WooCommerce → Settings → Advanced → Features). Without HPOS the plugin does nothing. Make a database backup before the first run.
+
 Stores with years of orders get a slow Orders screen, slow searches and heavy database queries. Nextial Order Archive moves old, finished orders out of the live WooCommerce order tables into archive tables, so WooCommerce works on the orders that matter today.
 
 https://youtu.be/QfCGkjeeZkA
