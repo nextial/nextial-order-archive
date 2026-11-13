@@ -11,9 +11,8 @@
  * deleted. Any difference rolls the whole batch back.
  *
  * Shops on the classic storage (HPOS off) have the same engine on wp_posts
- * and wp_postmeta (mirrors nxoa_posts / nxoa_postmeta). That support stays
- * behind the "nextial_oa_legacy_storage" filter until the panel, the
- * customer view and the privacy tools read the classic archive too.
+ * and wp_postmeta (mirrors nxoa_posts / nxoa_postmeta). It can be turned
+ * off with the "nextial_oa_legacy_storage" filter.
  *
  * Analytics tables (wc_order_stats and the lookup tables) are left alone,
  * so WooCommerce reports keep their history. The placeholder posts that HPOS
@@ -76,16 +75,16 @@ class Nextial_OA_Archiver {
 	}
 
 	/**
-	 * Support for the classic posts storage. Off until every part of the
-	 * plugin (panel, customer view, privacy tools) reads that storage too.
+	 * Support for the classic posts storage (on since 0.2.0).
 	 */
 	public static function legacy_enabled() {
 		/**
 		 * Allow archiving on shops without HPOS (classic posts storage).
+		 * Return false to keep the plugin idle on such shops.
 		 *
-		 * @param bool $enabled Default false.
+		 * @param bool $enabled Default true.
 		 */
-		return (bool) apply_filters( 'nextial_oa_legacy_storage', false );
+		return (bool) apply_filters( 'nextial_oa_legacy_storage', true );
 	}
 
 	/**
@@ -129,7 +128,7 @@ class Nextial_OA_Archiver {
 			return __( 'WooCommerce is not active.', 'nextial-order-archive' );
 		}
 		if ( ! class_exists( '\Automattic\WooCommerce\Utilities\OrderUtil' ) || ( self::is_legacy() && ! self::legacy_enabled() ) ) {
-			return __( 'This plugin needs High-Performance Order Storage (HPOS). Turn it on in WooCommerce → Settings → Advanced → Features.', 'nextial-order-archive' );
+			return __( 'Archiving on the classic order storage is switched off on this site (filter nextial_oa_legacy_storage). Remove that filter, or turn on High-Performance Order Storage (HPOS) in WooCommerce → Settings → Advanced → Features.', 'nextial-order-archive' );
 		}
 		if ( 'yes' === get_option( 'woocommerce_custom_orders_table_data_sync_enabled' ) ) {
 			return __( 'Compatibility mode (order data sync with the posts table) is on. Turn it off in WooCommerce → Settings → Advanced → Features before archiving, so orders are stored in one place only.', 'nextial-order-archive' );

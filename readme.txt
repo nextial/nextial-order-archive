@@ -1,20 +1,22 @@
-=== Nextial Order Archive – Archive Old Orders for WooCommerce (HPOS) ===
+=== Nextial Order Archive – Archive Old Orders for WooCommerce ===
 Contributors: nextial
-Tags: archive orders, old orders, hpos, database cleanup, woocommerce orders
+Tags: archive orders, old orders, hpos, database cleanup, wp_postmeta
 Requires at least: 6.5
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.1.4
+Stable tag: 0.2.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
-Archive old orders automatically and keep the WooCommerce Orders screen fast (HPOS). Search archived orders and restore any order in one click.
+Archive old orders automatically and keep the WooCommerce Orders screen fast, with or without HPOS. Search archived orders and restore in one click.
 
 == Description ==
 
-**Before you install, you need:** WooCommerce with **High-Performance Order Storage (HPOS)** turned on and **compatibility mode off** (WooCommerce → Settings → Advanced → Features). Without HPOS the plugin does nothing. Make a database backup before the first run.
+**Before you install, you need:** WooCommerce 8.2 or newer with **compatibility mode off** (WooCommerce → Settings → Advanced → Features), so orders live in one place only. Both order storages work: **High-Performance Order Storage (HPOS)** and the **classic storage** in wp_posts / wp_postmeta (since 0.2.0). Make a database backup before the first run.
 
-Stores with years of orders get a slow Orders screen, slow searches and heavy database queries. Nextial Order Archive moves old, finished orders out of the live WooCommerce order tables into archive tables, so WooCommerce works on the orders that matter today.
+Stores with years of orders get a slow Orders screen, slow searches and heavy database queries. On shops without HPOS it is worse: every order adds dozens of rows to wp_postmeta, the table the whole site reads. Nextial Order Archive moves old, finished orders out of the live WooCommerce order tables into archive tables, so WooCommerce works on the orders that matter today.
+
+* **Works without HPOS too**: on the classic storage the orders, their meta, items and notes leave wp_posts and wp_postmeta. In our test shop with 18,600 orders, archiving 15,593 of them took wp_postmeta from 647,958 to 98,111 rows; restoring brought every order back identical.
 
 https://youtu.be/QfCGkjeeZkA
 
@@ -32,9 +34,10 @@ https://youtu.be/QfCGkjeeZkA
 
 * Every batch runs inside one database transaction: rows are copied, every row count is checked, and only then are the live rows removed. Any difference rolls the batch back and nothing is moved.
 * An order moves with everything that belongs to it: addresses, operational data, meta, line items and their meta, order notes and child refunds.
-* Order IDs stay reserved (HPOS placeholder posts are kept), so a restored order gets its own ID back and no new order can take it.
+* With HPOS, order IDs stay reserved (the placeholder posts are kept), so a restored order gets its own ID back and no new order can take it. On the classic storage WordPress does not reuse IDs; if an ID were ever taken, that order is skipped on restore and nothing is overwritten.
 * Orders linked to WooCommerce Subscriptions and orders with downloads the customer can still use are never archived. Processing and on-hold orders are never archived.
-* Requires High-Performance Order Storage (HPOS) with compatibility mode off, so orders live in one place only. The plugin checks this and does nothing otherwise.
+* Compatibility mode (sync between HPOS and the posts tables) must be off, so orders live in one place only. The plugin checks this and does nothing otherwise.
+* If you switch between HPOS and the classic storage, restore the archive first: the plugin refuses to mix the two.
 * Uninstalling the plugin never deletes the archive.
 
 = What to know =
@@ -54,7 +57,7 @@ https://youtu.be/QfCGkjeeZkA
 
 = Does it work without HPOS? =
 
-No. The plugin needs High-Performance Order Storage, the default order storage of WooCommerce for new stores. Turn it on in WooCommerce → Settings → Advanced → Features and turn compatibility mode off.
+Yes, since 0.2.0. On the classic storage orders are archived out of wp_posts, wp_postmeta, the order items tables and the comments tables, with the same transaction and row-count checks. Compatibility mode must be off. Developers can switch this off with the filter `nextial_oa_legacy_storage` (return false).
 
 = Can I get an order back? =
 
@@ -92,6 +95,11 @@ Each batch runs in one database transaction and every row count is checked befor
 4. Pro: archived orders found by the normal WooCommerce order search.
 
 == Changelog ==
+
+= 0.2.0 =
+* New: works on shops without HPOS (classic storage in wp_posts / wp_postmeta), the most requested case for big old stores. Archive, preview, search, bulk restore, the customer "Archived orders" tab and the privacy tools all work there.
+* Tested on WooCommerce 11.3 with 18,600 orders: 15,593 archived and restored identical, wp_postmeta from 647,958 to 98,111 rows.
+* HPOS shops: nothing changes.
 
 = 0.1.4 =
 * New: the WordPress privacy tools (Tools → Export/Erase Personal Data) now include archived orders. Without this, an access or erasure request silently skipped them.
