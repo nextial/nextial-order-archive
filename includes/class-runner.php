@@ -68,7 +68,14 @@ class Nextial_OA_Runner {
 		return is_array( $r ) ? $r : null;
 	}
 
-	public static function start() {
+	/**
+	 * Start a background run.
+	 *
+	 * @param string $mode 'archive' (apply the rule) or 'restore' (bring back
+	 *                     every archived order matching $term).
+	 * @param string $term Search term for 'restore' ('' = the whole archive).
+	 */
+	public static function start( $mode = 'archive', $term = '' ) {
 		if ( true !== Nextial_OA_Archiver::check_environment() || ! function_exists( 'as_enqueue_async_action' ) ) {
 			return false;
 		}
@@ -84,6 +91,9 @@ class Nextial_OA_Runner {
 				'batches' => 0,
 				'status'  => 'running',
 				'error'   => '',
+				'mode'    => 'restore' === $mode ? 'restore' : 'archive',
+				'term'    => 'restore' === $mode ? (string) $term : '',
+				'skipped' => array(),
 			),
 			false
 		);
@@ -120,6 +130,10 @@ class Nextial_OA_Runner {
 			return;
 		}
 		$rule = self::rule();
+		if ( 'restore' === ( $run['mode'] ?? 'archive' ) ) {
+			self::restore_batch( $run, (int) $rule['batch_size'] );
+			return;
+		}
 		$c    = Nextial_OA_Archiver::candidates( $rule, (int) $rule['batch_size'] );
 		if ( empty( $c['ids'] ) ) {
 			$run['status'] = 'done';
@@ -135,6 +149,45 @@ class Nextial_OA_Runner {
 			return;
 		}
 		$run['moved'] += $res['moved'];
+		update_option( self::OPT_RUN, $run, false );
+		as_schedule_single_action( time() + 5, self::HOOK_BATCH, array(), self::GROUP );
+	}
+
+	/**
+	 * One restore batch. Orders that cannot be restored (for example an ID
+	 * conflict) are skipped and listed, the others keep going.
+	 */
+	private static function restore_batch( array $run, $size ) {
+		$skipped = array_map( 'intval', (array) ( $run['skipped'] ?? array() ) );
+		$ids     = Nextial_OA_Archiver::archived_ids( (string) ( $run['term'] ?? '' ), $size, $skipped );
+		if ( empty( $ids ) ) {
+			$run['status'] = 'done';
+			update_option( self::OPT_RUN, $run, false );
+			return;
+		}
+		$res = Nextial_OA_Archiver::restore_many( $ids );
+		++$run['batches'];
+		$run['moved'] += $res['restored'];
+		if ( $res['failed'] ) {
+			$busy = false;
+			foreach ( $res['failed'] as $id => $error ) {
+				if ( false !== strpos( $error, 'Another archive or restore is running' ) ) {
+					$busy = true; // Not the order's fault: try it again next batch.
+					continue;
+				}
+				$run['skipped'][] = (int) $id;
+				$run['error']     = $error;
+			}
+			if ( $busy && 0 === $res['restored'] && count( $run['skipped'] ) === count( $skipped ) ) {
+				$run['busy'] = (int) ( $run['busy'] ?? 0 ) + 1;
+				if ( $run['busy'] > 20 ) {
+					$run['status'] = 'error';
+					$run['error']  = 'Another archive or restore kept running; restore stopped.';
+					update_option( self::OPT_RUN, $run, false );
+					return;
+				}
+			}
+		}
 		update_option( self::OPT_RUN, $run, false );
 		as_schedule_single_action( time() + 5, self::HOOK_BATCH, array(), self::GROUP );
 	}

@@ -18,6 +18,8 @@ class Nextial_OA_Admin {
 		add_action( 'admin_post_nextial_oa_start', array( __CLASS__, 'action_start' ) );
 		add_action( 'admin_post_nextial_oa_stop', array( __CLASS__, 'action_stop' ) );
 		add_action( 'admin_post_nextial_oa_restore', array( __CLASS__, 'action_restore' ) );
+		add_action( 'admin_post_nextial_oa_restore_bulk', array( __CLASS__, 'action_restore_bulk' ) );
+		add_action( 'admin_post_nextial_oa_restore_all', array( __CLASS__, 'action_restore_all' ) );
 		add_action( 'admin_notices', array( __CLASS__, 'orders_screen_notice' ) );
 		add_filter( 'plugin_action_links_' . plugin_basename( NEXTIAL_OA_FILE ), array( __CLASS__, 'action_links' ) );
 	}
@@ -132,6 +134,68 @@ class Nextial_OA_Admin {
 		}
 		/* translators: %s: error */
 		self::done( 'error', sprintf( __( 'Nothing was restored: %s', 'nextial-order-archive' ), $res['error'] ) );
+	}
+
+	/** "1" / "1.234" / "500+" for the buttons above the archive list. */
+	private static function count_label( $n ) {
+		return $n >= 500 ? '500+' : number_format_i18n( $n );
+	}
+
+	/** Label of the "restore everything that matches" button. */
+	private static function restore_all_label( $search, $matching ) {
+		$n = self::count_label( $matching );
+		if ( '' === $search ) {
+			/* translators: %s: number of orders */
+			return sprintf( _n( 'Restore the %s archived order', 'Restore all %s archived orders', $matching, 'nextial-order-archive' ), $n );
+		}
+		/* translators: %s: number of orders */
+		return sprintf( _n( 'Restore the %s order matching this search', 'Restore all %s orders matching this search', $matching, 'nextial-order-archive' ), $n );
+	}
+
+	/** Restore the orders ticked in the list (at most 200 at a time). */
+	public static function action_restore_bulk() {
+		self::guard( 'nextial_oa_restore_bulk' );
+		// phpcs:ignore WordPress.Security.NonceVerification.Missing -- checked in guard().
+		$ids = isset( $_POST['orders'] ) && is_array( $_POST['orders'] ) ? array_slice( array_map( 'intval', wp_unslash( $_POST['orders'] ) ), 0, 200 ) : array();
+		$ids = array_values( array_filter( $ids ) );
+		if ( empty( $ids ) ) {
+			self::done( 'warning', __( 'No order selected: tick the orders to restore first.', 'nextial-order-archive' ) );
+		}
+		$res = Nextial_OA_Archiver::restore_many( $ids );
+		return self::bulk_notice( $res );
+	}
+
+	/** Restore every archived order matching the search, in the background. */
+	public static function action_restore_all() {
+		self::guard( 'nextial_oa_restore_all' );
+		$term = isset( $_POST['s'] ) ? sanitize_text_field( wp_unslash( $_POST['s'] ) ) : ''; // phpcs:ignore WordPress.Security.NonceVerification.Missing
+		if ( ! Nextial_OA_Runner::start( 'restore', $term ) ) {
+			self::done( 'error', __( 'Could not start: another run is in progress, or the requirements at the top of this page are not met.', 'nextial-order-archive' ) );
+		}
+		self::done( 'success', __( 'Restoring in the background, in small batches. Reload this page to follow the progress. Restored orders are not archived again by the automatic rule.', 'nextial-order-archive' ) );
+	}
+
+	/**
+	 * Notice for a bulk restore result.
+	 *
+	 * @param array $res Result of Nextial_OA_Archiver::restore_many().
+	 */
+	private static function bulk_notice( array $res ) {
+		$text = sprintf(
+			/* translators: %d: number of orders */
+			_n( '%d order restored. It is back in WooCommerce → Orders.', '%d orders restored. They are back in WooCommerce → Orders.', $res['restored'], 'nextial-order-archive' ),
+			$res['restored']
+		);
+		if ( $res['failed'] ) {
+			$first = reset( $res['failed'] );
+			$text .= ' ' . sprintf(
+				/* translators: 1: list of order IDs, 2: reason */
+				__( 'Not restored: %1$s (%2$s). They are still safe in the archive.', 'nextial-order-archive' ),
+				'#' . implode( ', #', array_keys( $res['failed'] ) ),
+				$first
+			);
+		}
+		self::done( $res['failed'] ? ( $res['restored'] ? 'warning' : 'error' ) : 'success', $text );
 	}
 
 	private static function post_button( $action, $label, array $fields = array(), $class = 'button' ) {
@@ -327,8 +391,19 @@ class Nextial_OA_Admin {
 			<?php if ( $run && 'running' === $run['status'] ) : ?>
 				<p><strong>
 					<?php
-					/* translators: 1: orders moved, 2: start time */
-					printf( esc_html__( 'Running: %1$d orders archived so far (started %2$s).', 'nextial-order-archive' ), (int) $run['moved'], esc_html( wp_date( $fmt, (int) $run['started'] ) ) );
+					if ( 'restore' === ( $run['mode'] ?? 'archive' ) ) {
+						printf(
+							esc_html(
+								/* translators: 1: orders moved, 2: start time */
+								_n( 'Restoring: %1$d order restored so far (started %2$s).', 'Restoring: %1$d orders restored so far (started %2$s).', (int) $run['moved'], 'nextial-order-archive' )
+							),
+							(int) $run['moved'],
+							esc_html( wp_date( $fmt, (int) $run['started'] ) )
+						);
+					} else {
+						/* translators: 1: orders moved, 2: start time */
+						printf( esc_html__( 'Running: %1$d orders archived so far (started %2$s).', 'nextial-order-archive' ), (int) $run['moved'], esc_html( wp_date( $fmt, (int) $run['started'] ) ) );
+					}
 					?>
 				</strong></p>
 				<p><?php self::post_button( 'nextial_oa_stop', __( 'Stop', 'nextial-order-archive' ) ); ?></p>
@@ -336,8 +411,24 @@ class Nextial_OA_Admin {
 				<?php if ( $run ) : ?>
 					<p>
 						<?php
-						/* translators: 1: status, 2: count, 3: date */
-						printf( esc_html__( 'Last run: %1$s, %2$d orders archived (started %3$s).', 'nextial-order-archive' ), esc_html( $run['status'] ), (int) $run['moved'], esc_html( wp_date( $fmt, (int) $run['started'] ) ) );
+						if ( 'restore' === ( $run['mode'] ?? 'archive' ) ) {
+							printf(
+								esc_html(
+									/* translators: 1: status, 2: count, 3: date */
+									_n( 'Last run (restore): %1$s, %2$d order restored (started %3$s).', 'Last run (restore): %1$s, %2$d orders restored (started %3$s).', (int) $run['moved'], 'nextial-order-archive' )
+								),
+								esc_html( $run['status'] ),
+								(int) $run['moved'],
+								esc_html( wp_date( $fmt, (int) $run['started'] ) )
+							);
+							if ( ! empty( $run['skipped'] ) ) {
+								/* translators: %s: list of order IDs */
+								echo ' ' . esc_html( sprintf( __( 'Left in the archive: %s.', 'nextial-order-archive' ), '#' . implode( ', #', array_map( 'intval', array_slice( $run['skipped'], 0, 20 ) ) ) ) );
+							}
+						} else {
+							/* translators: 1: status, 2: count, 3: date */
+							printf( esc_html__( 'Last run: %1$s, %2$d orders archived (started %3$s).', 'nextial-order-archive' ), esc_html( $run['status'] ), (int) $run['moved'], esc_html( wp_date( $fmt, (int) $run['started'] ) ) );
+						}
 						if ( ! empty( $run['error'] ) ) {
 							echo ' <span style="color:#b32d2e">' . esc_html( $run['error'] ) . '</span>';
 						}
@@ -357,11 +448,32 @@ class Nextial_OA_Admin {
 			<?php if ( empty( $rows ) ) : ?>
 				<p><em><?php echo '' === $search ? esc_html__( 'The archive is empty.', 'nextial-order-archive' ) : esc_html__( 'No archived order matches.', 'nextial-order-archive' ); ?></em></p>
 			<?php else : ?>
+				<?php
+				$matching = '' === $search ? Nextial_OA_Archiver::archived_count() : count( Nextial_OA_Archiver::archived_ids( $search, 500 ) );
+				$running  = $run && 'running' === $run['status'];
+				?>
+				<form id="nxoa-bulk" method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:none">
+					<input type="hidden" name="action" value="nextial_oa_restore_bulk">
+					<?php wp_nonce_field( 'nextial_oa_restore_bulk' ); ?>
+				</form>
+				<p style="margin-top:10px">
+					<button type="submit" form="nxoa-bulk" class="button"<?php disabled( $running ); ?>><?php esc_html_e( 'Restore selected', 'nextial-order-archive' ); ?></button>
+					<?php if ( ! $running ) : ?>
+						<form method="post" action="<?php echo esc_url( admin_url( 'admin-post.php' ) ); ?>" style="display:inline-block" onsubmit="return confirm(this.dataset.confirm);" data-confirm="<?php echo esc_attr( sprintf( /* translators: %s: number of orders */ _n( 'Restore %s archived order to WooCommerce → Orders?', 'Restore %s archived orders to WooCommerce → Orders?', $matching, 'nextial-order-archive' ), self::count_label( $matching ) ) ); ?>">
+							<input type="hidden" name="action" value="nextial_oa_restore_all">
+							<input type="hidden" name="s" value="<?php echo esc_attr( $search ); ?>">
+							<?php wp_nonce_field( 'nextial_oa_restore_all' ); ?>
+							<button type="submit" class="button"><?php echo esc_html( self::restore_all_label( $search, $matching ) ); ?></button>
+						</form>
+					<?php endif; ?>
+					<span class="description"><?php esc_html_e( 'Orders come back with their own ID, notes and refunds. Stock and reports do not change.', 'nextial-order-archive' ); ?></span>
+				</p>
 				<table class="widefat striped" style="max-width:1000px;margin-top:10px">
-					<thead><tr><th><?php esc_html_e( 'Order', 'nextial-order-archive' ); ?></th><th><?php esc_html_e( 'Date', 'nextial-order-archive' ); ?></th><th><?php esc_html_e( 'Customer', 'nextial-order-archive' ); ?></th><th><?php esc_html_e( 'Status', 'nextial-order-archive' ); ?></th><th><?php esc_html_e( 'Total', 'nextial-order-archive' ); ?></th><th></th></tr></thead>
+					<thead><tr><td class="check-column" style="padding:8px 0 0 3px"><input type="checkbox" aria-label="<?php esc_attr_e( 'Select all', 'nextial-order-archive' ); ?>" onclick="document.querySelectorAll('.nxoa-pick').forEach(function(c){c.checked=this.checked;},this)"></td><th><?php esc_html_e( 'Order', 'nextial-order-archive' ); ?></th><th><?php esc_html_e( 'Date', 'nextial-order-archive' ); ?></th><th><?php esc_html_e( 'Customer', 'nextial-order-archive' ); ?></th><th><?php esc_html_e( 'Status', 'nextial-order-archive' ); ?></th><th><?php esc_html_e( 'Total', 'nextial-order-archive' ); ?></th><th></th></tr></thead>
 					<tbody>
 					<?php foreach ( $rows as $r ) : ?>
 						<tr>
+							<th scope="row" class="check-column" style="padding:8px 0 0 3px"><input type="checkbox" class="nxoa-pick" form="nxoa-bulk" name="orders[]" value="<?php echo esc_attr( $r['id'] ); ?>" aria-label="<?php echo esc_attr( '#' . $r['id'] ); ?>"></th>
 							<td>#<?php echo esc_html( $r['id'] ); ?></td>
 							<td><?php echo esc_html( $r['date_created_gmt'] ? get_date_from_gmt( $r['date_created_gmt'], get_option( 'date_format' ) ) : '' ); ?></td>
 							<td><?php echo esc_html( trim( $r['first_name'] . ' ' . $r['last_name'] ) ); ?><br><span style="color:#646970"><?php echo esc_html( $r['billing_email'] ); ?></span></td>

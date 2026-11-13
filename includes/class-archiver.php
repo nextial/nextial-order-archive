@@ -547,6 +547,88 @@ class Nextial_OA_Archiver {
 	}
 
 	/**
+	 * IDs of archived orders matching a search (same matching as
+	 * search_archived()), newest first.
+	 *
+	 * @param string $term    Search term ('' = all).
+	 * @param int    $limit   Max IDs.
+	 * @param int[]  $exclude IDs to leave out.
+	 * @return int[]
+	 */
+	public static function archived_ids( $term, $limit = 50, array $exclude = array() ) {
+		global $wpdb;
+		$o = self::archive_table( $wpdb->prefix . 'wc_orders' );
+		$a = self::archive_table( $wpdb->prefix . 'wc_order_addresses' );
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $o ) ) !== $o ) {
+			return array();
+		}
+		$term    = trim( (string) $term );
+		$limit   = max( 1, min( 500, (int) $limit ) );
+		$exclude = array_values( array_filter( array_map( 'intval', $exclude ) ) );
+		$sql     = "SELECT o.id FROM `{$o}` o LEFT JOIN `{$a}` ba ON ba.order_id = o.id AND ba.address_type = 'billing' WHERE o.type = 'shop_order'";
+		if ( $exclude ) {
+			$sql .= ' AND o.id NOT IN (' . implode( ',', $exclude ) . ')';
+		}
+		if ( '' === $term ) {
+			return array_map( 'intval', $wpdb->get_col( $wpdb->prepare( $sql . ' ORDER BY o.date_created_gmt DESC, o.id DESC LIMIT %d', $limit ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+		}
+		$like = '%' . $wpdb->esc_like( $term ) . '%';
+		return array_map(
+			'intval',
+			$wpdb->get_col(
+				$wpdb->prepare(
+					$sql . ' AND ( o.id = %d OR o.billing_email LIKE %s OR ba.first_name LIKE %s OR ba.last_name LIKE %s OR CONCAT(ba.first_name, \' \', ba.last_name) LIKE %s ) ORDER BY o.date_created_gmt DESC, o.id DESC LIMIT %d', // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+					ctype_digit( ltrim( $term, '#' ) ) ? (int) ltrim( $term, '#' ) : 0,
+					$like,
+					$like,
+					$like,
+					$like,
+					$limit
+				)
+			)
+		);
+	}
+
+	/**
+	 * Restore many orders: in batches of 50, all or nothing per batch. If a
+	 * batch is refused (for example one order ID already exists in the live
+	 * tables), its orders are tried one by one, so one conflict does not
+	 * block the others. Nothing is ever overwritten.
+	 *
+	 * @param int[] $order_ids Order IDs.
+	 * @return array{restored:int, failed:array<int,string>}
+	 */
+	public static function restore_many( array $order_ids ) {
+		$order_ids = array_values( array_unique( array_filter( array_map( 'intval', $order_ids ) ) ) );
+		$out       = array(
+			'restored' => 0,
+			'failed'   => array(),
+		);
+		foreach ( array_chunk( $order_ids, 50 ) as $chunk ) {
+			$res = self::restore( $chunk );
+			if ( $res['ok'] ) {
+				$out['restored'] += $res['moved'];
+				continue;
+			}
+			if ( false !== strpos( $res['error'], 'Another archive or restore is running' ) ) {
+				foreach ( $chunk as $id ) {
+					$out['failed'][ $id ] = $res['error'];
+				}
+				continue;
+			}
+			foreach ( $chunk as $id ) {
+				$one = self::restore( array( $id ) );
+				if ( $one['ok'] ) {
+					$out['restored'] += $one['moved'];
+				} else {
+					$out['failed'][ $id ] = $one['error'];
+				}
+			}
+		}
+		return $out;
+	}
+
+	/**
 	 * Fingerprint of an order's rows (for tests and the integrity check):
 	 * row count and a checksum per table, wherever the order lives.
 	 *

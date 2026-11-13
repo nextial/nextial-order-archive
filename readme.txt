@@ -4,7 +4,7 @@ Tags: archive orders, old orders, hpos, database cleanup, woocommerce orders
 Requires at least: 6.5
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.1.2
+Stable tag: 0.1.3
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -24,7 +24,7 @@ https://youtu.be/QfCGkjeeZkA
 * **Automatic**: optionally run the rule every night.
 * **Search the archive** by order number, e-mail or customer name.
 * **Customers still see their old orders**: an "Archived orders" tab in My Account lists them, read-only, with items, totals, refunds and addresses. Only the customer's own orders, and only if they have any. You can switch it off.
-* **Restore in one click**: the order comes back with the same ID, items, notes and refunds. A restored order is never archived again automatically.
+* **Restore in one click, or in bulk**: tick the orders you want back, or restore every order matching your search (or the whole archive) in background batches. Orders come back with the same ID, items, notes and refunds, and a restored order is never archived again automatically.
 * **Reports keep their history**: WooCommerce Analytics tables are not touched.
 
 = Safe by design =
@@ -59,6 +59,10 @@ No. The plugin needs High-Performance Order Storage, the default order storage o
 
 Yes, from WooCommerce → Order Archive → Archived orders → Restore. It returns with the same ID and all its data.
 
+= Can I restore many orders at once? =
+
+Yes, free: tick several orders and press "Restore selected", or press "Restore all … archived orders" (with a search term: all the orders that match) and they come back in small background batches, like archiving. If one order cannot come back — for example its ID is taken by a new order — it is skipped and listed, and the others still return.
+
 = What happens to reports? =
 
 Nothing: WooCommerce Analytics keeps its own tables, which this plugin never changes.
@@ -83,6 +87,10 @@ Each batch runs in one database transaction and every row count is checked befor
 4. Pro: archived orders found by the normal WooCommerce order search.
 
 == Changelog ==
+
+= 0.1.3 =
+* New: bulk restore from the admin screen, free. Tick orders and press "Restore selected", or restore everything matching the current search (or the whole archive) in background batches.
+* Orders that cannot be restored (for example an ID now used by a new order) are skipped and listed; the rest still come back. Nothing is ever overwritten.
 
 = 0.1.2 =
 * The "See Order Archive Pro" button now opens the secure checkout directly.
