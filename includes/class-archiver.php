@@ -485,7 +485,7 @@ class Nextial_OA_Archiver {
 		return '';
 	}
 
-	private static function flush_cache( $id ) {
+	public static function flush_cache( $id ) {
 		wp_cache_delete( $id, 'orders' );
 		wp_cache_delete( 'order-' . $id, 'orders' );
 		if ( function_exists( 'wc_get_container' ) && class_exists( '\Automattic\WooCommerce\Caches\OrderCache' ) ) {

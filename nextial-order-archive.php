@@ -2,7 +2,7 @@
 /**
  * Plugin Name:          Nextial Order Archive – Archive Old Orders for WooCommerce (HPOS)
  * Description:          Keeps the WooCommerce Orders screen fast: moves old, finished orders into archive tables (HPOS), keeps them searchable and restores any order in one click.
- * Version:              0.1.3
+ * Version:              0.1.4
  * Requires at least:    6.5
  * Requires PHP:         7.4
  * Requires Plugins:     woocommerce
@@ -18,7 +18,7 @@
 
 defined( 'ABSPATH' ) || exit;
 
-define( 'NEXTIAL_OA_VERSION', '0.1.3' );
+define( 'NEXTIAL_OA_VERSION', '0.1.4' );
 define( 'NEXTIAL_OA_FILE', __FILE__ );
 define( 'NEXTIAL_OA_DIR', plugin_dir_path( __FILE__ ) );
 
@@ -27,6 +27,7 @@ require_once NEXTIAL_OA_DIR . 'includes/class-archiver.php';
 require_once NEXTIAL_OA_DIR . 'includes/class-runner.php';
 require_once NEXTIAL_OA_DIR . 'includes/class-admin.php';
 require_once NEXTIAL_OA_DIR . 'includes/class-account.php';
+require_once NEXTIAL_OA_DIR . 'includes/class-privacy.php';
 
 // Declare HPOS compatibility (the plugin requires it).
 add_action(
@@ -62,6 +63,7 @@ add_action(
 	static function () {
 		Nextial_OA_Runner::init();
 		Nextial_OA_Account::init();
+		Nextial_OA_Privacy::init();
 		if ( is_admin() ) {
 			Nextial_OA_Admin::init();
 		}

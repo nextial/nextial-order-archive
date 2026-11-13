@@ -4,7 +4,7 @@ Tags: archive orders, old orders, hpos, database cleanup, woocommerce orders
 Requires at least: 6.5
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.1.3
+Stable tag: 0.1.4
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -26,6 +26,7 @@ https://youtu.be/QfCGkjeeZkA
 * **Customers still see their old orders**: an "Archived orders" tab in My Account lists them, read-only, with items, totals, refunds and addresses. Only the customer's own orders, and only if they have any. You can switch it off.
 * **Restore in one click, or in bulk**: tick the orders you want back, or restore every order matching your search (or the whole archive) in background batches. Orders come back with the same ID, items, notes and refunds, and a restored order is never archived again automatically.
 * **Reports keep their history**: WooCommerce Analytics tables are not touched.
+* **Privacy requests include archived orders**: the WordPress tools under Tools → Export/Erase Personal Data find archived orders too, with the same rules WooCommerce uses for live ones.
 
 = Safe by design =
 
@@ -75,6 +76,10 @@ Settings are removed, the archive tables are kept. Reinstall the plugin to searc
 
 Yes. From 0.1.1 an "Archived orders" tab appears in the customer's My Account page, only if they have archived orders. It is read-only and shows only their own orders. Orders placed as a guest (no account) are not shown. You can switch the tab off in WooCommerce → Order Archive.
 
+= What about GDPR requests (export and erase personal data)? =
+
+Archived orders are included. WordPress → Tools → Export Personal Data adds a section "Archived orders" with the order, its items and the addresses. Tools → Erase Personal Data anonymises archived orders exactly when WooCommerce would anonymise live ones: only if "Remove personal data from orders on request" is on in WooCommerce → Settings → Accounts & Privacy. Totals, items, dates and country stay, so reports and accounting still add up.
+
 = Is it safe on a big store? =
 
 Each batch runs in one database transaction and every row count is checked before the live rows are removed; if anything differs, the batch is rolled back. Use the preview first and make a database backup before the first run.
@@ -87,6 +92,10 @@ Each batch runs in one database transaction and every row count is checked befor
 4. Pro: archived orders found by the normal WooCommerce order search.
 
 == Changelog ==
+
+= 0.1.4 =
+* New: the WordPress privacy tools (Tools → Export/Erase Personal Data) now include archived orders. Without this, an access or erasure request silently skipped them.
+* Erasing follows the WooCommerce setting "Remove personal data from orders on request" and anonymises the same fields; totals, items, dates and country are kept.
 
 = 0.1.3 =
 * New: bulk restore from the admin screen, free. Tick orders and press "Restore selected", or restore everything matching the current search (or the whole archive) in background batches.
