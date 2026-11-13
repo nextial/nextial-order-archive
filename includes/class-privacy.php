@@ -47,6 +47,10 @@ class Nextial_OA_Privacy {
 	 */
 	private static function order_ids( $email_address, $page ) {
 		global $wpdb;
+		if ( Nextial_OA_Archiver::is_legacy() ) {
+			$user = get_user_by( 'email', $email_address );
+			return Nextial_OA_Archiver::legacy_archived_ids_for( $user instanceof WP_User ? (int) $user->ID : 0, (string) $email_address, self::PER_PAGE, ( max( 1, (int) $page ) - 1 ) * self::PER_PAGE );
+		}
 		$o = Nextial_OA_Archiver::archive_table( $wpdb->prefix . 'wc_orders' );
 		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $o ) ) !== $o ) {
 			return array();
@@ -77,11 +81,17 @@ class Nextial_OA_Privacy {
 		$o     = Nextial_OA_Archiver::archive_table( $wpdb->prefix . 'wc_orders' );
 		$a     = Nextial_OA_Archiver::archive_table( $wpdb->prefix . 'wc_order_addresses' );
 		$i     = Nextial_OA_Archiver::archive_table( $wpdb->prefix . 'woocommerce_order_items' );
-		$order = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM `{$o}` WHERE id = %d", $id ), ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		if ( Nextial_OA_Archiver::is_legacy() ) {
+			$legacy    = Nextial_OA_Archiver::legacy_archived_order( $id );
+			$order     = $legacy ? $legacy['order'] : null;
+			$addresses = $legacy ? array_values( $legacy['addresses'] ) : array();
+		} else {
+			$order     = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM `{$o}` WHERE id = %d", $id ), ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$addresses = $order ? $wpdb->get_results( $wpdb->prepare( "SELECT * FROM `{$a}` WHERE order_id = %d", $id ), ARRAY_A ) : array(); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		}
 		if ( ! $order ) {
 			return array();
 		}
-		$addresses = $wpdb->get_results( $wpdb->prepare( "SELECT * FROM `{$a}` WHERE order_id = %d", $id ), ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		$items     = $wpdb->get_col( $wpdb->prepare( "SELECT order_item_name FROM `{$i}` WHERE order_id = %d AND order_item_type = 'line_item'", $id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 
 		$data = array(
@@ -240,6 +250,15 @@ class Nextial_OA_Privacy {
 	public static function anonymise( $order_id ) {
 		global $wpdb;
 		$order_id = (int) $order_id;
+		if ( Nextial_OA_Archiver::is_legacy() ) {
+			$changed = self::anonymise_legacy( $order_id );
+			if ( null === $changed ) {
+				return false;
+			}
+			/** This action is documented below. */
+			do_action( 'nextial_oa_anonymised', $order_id );
+			return $changed;
+		}
 		$o        = Nextial_OA_Archiver::archive_table( $wpdb->prefix . 'wc_orders' );
 		$a        = Nextial_OA_Archiver::archive_table( $wpdb->prefix . 'wc_order_addresses' );
 		$ids      = array_map( 'intval', $wpdb->get_col( $wpdb->prepare( "SELECT id FROM `{$o}` WHERE id = %d OR parent_order_id = %d", $order_id, $order_id ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
@@ -288,6 +307,55 @@ class Nextial_OA_Privacy {
 		 * @param int $order_id Archived order ID.
 		 */
 		do_action( 'nextial_oa_anonymised', $order_id );
+		return $changed;
+	}
+
+	/**
+	 * Classic archive: the same fields as anonymise(), in nxoa_postmeta
+	 * (and the customer note in post_excerpt). Null if the order is not there.
+	 *
+	 * @param int $order_id Archived order ID.
+	 * @return bool|null
+	 */
+	private static function anonymise_legacy( $order_id ) {
+		global $wpdb;
+		$p   = Nextial_OA_Archiver::archive_table( $wpdb->posts );
+		$pm  = Nextial_OA_Archiver::archive_table( $wpdb->postmeta );
+		$ids = array_map( 'intval', $wpdb->get_col( $wpdb->prepare( "SELECT ID FROM `{$p}` WHERE ( ID = %d AND post_type = 'shop_order' ) OR ( post_parent = %d AND post_type = 'shop_order_refund' )", $order_id, $order_id ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		if ( empty( $ids ) ) {
+			return null;
+		}
+		$types = array(
+			'_billing_email'        => 'email',
+			'_customer_ip_address'  => 'ip',
+			'_customer_user_agent'  => 'text',
+			'_transaction_id'       => 'numeric_id',
+		);
+		foreach ( array( 'billing', 'shipping' ) as $at ) {
+			foreach ( Nextial_OA_Archiver::ADDRESS_FIELDS as $f ) {
+				if ( 'country' === $f ) {
+					continue; // Kept, like WooCommerce.
+				}
+				$types[ "_{$at}_{$f}" ] = 'email' === $f ? 'email' : ( 'phone' === $f ? 'phone' : ( 'state' === $f ? 'address_state' : 'text' ) );
+			}
+		}
+		$changed = false;
+		foreach ( $ids as $id ) {
+			foreach ( $wpdb->get_results( $wpdb->prepare( "SELECT meta_id, meta_key, meta_value FROM `{$pm}` WHERE post_id = %d", $id ), ARRAY_A ) as $m ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+				if ( '_customer_user' === $m['meta_key'] ) {
+					$new = '0';
+				} elseif ( isset( $types[ $m['meta_key'] ] ) ) {
+					$new = self::anon( $types[ $m['meta_key'] ], $m['meta_value'] );
+				} else {
+					continue;
+				}
+				if ( (string) $new !== (string) $m['meta_value'] ) {
+					$changed = (bool) $wpdb->update( $pm, array( 'meta_value' => $new ), array( 'meta_id' => (int) $m['meta_id'] ) ) || $changed; // phpcs:ignore WordPress.DB.SlowDBQuery
+				}
+			}
+			$changed = (bool) $wpdb->update( $p, array( 'post_excerpt' => '' ), array( 'ID' => $id ) ) || $changed;
+			Nextial_OA_Archiver::flush_cache( $id );
+		}
 		return $changed;
 	}
 

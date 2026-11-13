@@ -718,6 +718,113 @@ class Nextial_OA_Archiver {
 		);
 	}
 
+	/** Address fields kept per address type (same names as HPOS columns). */
+	const ADDRESS_FIELDS = array( 'first_name', 'last_name', 'company', 'address_1', 'address_2', 'city', 'state', 'postcode', 'country', 'email', 'phone' );
+
+	/**
+	 * Classic storage: postmeta key for each HPOS order column we read or
+	 * anonymise. The customer note lives in post_excerpt.
+	 */
+	const LEGACY_META = array(
+		'billing_email'        => '_billing_email',
+		'customer_id'          => '_customer_user',
+		'total_amount'         => '_order_total',
+		'currency'             => '_order_currency',
+		'payment_method_title' => '_payment_method_title',
+		'ip_address'           => '_customer_ip_address',
+		'user_agent'           => '_customer_user_agent',
+		'transaction_id'       => '_transaction_id',
+	);
+
+	/**
+	 * One archived order from the classic archive, shaped like the HPOS rows
+	 * (order columns, addresses by type, refunded amount, discount), or null.
+	 *
+	 * @param int $order_id Order ID (an order or a refund).
+	 * @return array{order:array, addresses:array, refunded:float, discount:float}|null
+	 */
+	public static function legacy_archived_order( $order_id ) {
+		global $wpdb;
+		$p  = self::archive_table( $wpdb->posts );
+		$pm = self::archive_table( $wpdb->postmeta );
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $p ) ) !== $p ) {
+			return null;
+		}
+		$post = $wpdb->get_row( $wpdb->prepare( "SELECT ID, post_type, post_status, post_date_gmt, post_parent, post_excerpt FROM `{$p}` WHERE ID = %d AND post_type IN ('shop_order','shop_order_refund')", (int) $order_id ), ARRAY_A );
+		if ( ! $post ) {
+			return null;
+		}
+		$meta = array();
+		foreach ( $wpdb->get_results( $wpdb->prepare( "SELECT meta_key, meta_value FROM `{$pm}` WHERE post_id = %d", (int) $order_id ), ARRAY_A ) as $m ) {
+			if ( ! isset( $meta[ $m['meta_key'] ] ) ) {
+				$meta[ $m['meta_key'] ] = $m['meta_value'];
+			}
+		}
+		$order = array(
+			'id'               => (int) $post['ID'],
+			'type'             => $post['post_type'],
+			'status'           => $post['post_status'],
+			'date_created_gmt' => $post['post_date_gmt'],
+			'parent_order_id'  => (int) $post['post_parent'],
+			'customer_note'    => $post['post_excerpt'],
+			'tax_amount'       => (string) ( (float) ( $meta['_order_tax'] ?? 0 ) + (float) ( $meta['_order_shipping_tax'] ?? 0 ) ),
+		);
+		foreach ( self::LEGACY_META as $col => $key ) {
+			$order[ $col ] = $meta[ $key ] ?? '';
+		}
+		$order['customer_id'] = (int) $order['customer_id'];
+		$addresses            = array();
+		foreach ( array( 'billing', 'shipping' ) as $type ) {
+			$a   = array( 'address_type' => $type );
+			$any = false;
+			foreach ( self::ADDRESS_FIELDS as $f ) {
+				$a[ $f ] = $meta[ "_{$type}_{$f}" ] ?? '';
+				$any     = $any || '' !== (string) $a[ $f ];
+			}
+			if ( $any ) {
+				$addresses[ $type ] = $a;
+			}
+		}
+		$refunded = (float) $wpdb->get_var( $wpdb->prepare( "SELECT COALESCE(SUM(ABS(m.meta_value)),0) FROM `{$p}` r JOIN `{$pm}` m ON m.post_id = r.ID AND m.meta_key = '_order_total' WHERE r.post_type = 'shop_order_refund' AND r.post_parent = %d", (int) $order_id ) );
+		return array(
+			'order'     => $order,
+			'addresses' => $addresses,
+			'refunded'  => $refunded,
+			'discount'  => (float) ( $meta['_cart_discount'] ?? 0 ),
+		);
+	}
+
+	/**
+	 * Classic archive: IDs of a person's archived orders, matched by
+	 * customer ID or by billing/shipping e-mail. Oldest first.
+	 *
+	 * @return int[]
+	 */
+	public static function legacy_archived_ids_for( $user_id, $email, $limit, $offset = 0 ) {
+		global $wpdb;
+		$p  = self::archive_table( $wpdb->posts );
+		$pm = self::archive_table( $wpdb->postmeta );
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $p ) ) !== $p ) {
+			return array();
+		}
+		$user_id = (int) $user_id;
+		$email   = (string) $email;
+		return array_map(
+			'intval',
+			$wpdb->get_col(
+				$wpdb->prepare(
+					"SELECT p.ID FROM `{$p}` p WHERE p.post_type = 'shop_order' AND EXISTS ( SELECT 1 FROM `{$pm}` m WHERE m.post_id = p.ID AND ( ( %d > 0 AND m.meta_key = '_customer_user' AND m.meta_value = %s ) OR ( %s <> '' AND m.meta_key IN ('_billing_email','_shipping_email') AND m.meta_value = %s ) ) ) ORDER BY p.ID ASC LIMIT %d OFFSET %d",
+					$user_id,
+					(string) $user_id,
+					$email,
+					$email,
+					max( 1, (int) $limit ),
+					max( 0, (int) $offset )
+				)
+			)
+		);
+	}
+
 	/**
 	 * Restore many orders: in batches of 50, all or nothing per batch. If a
 	 * batch is refused (for example one order ID already exists in the live

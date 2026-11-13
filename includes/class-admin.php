@@ -223,7 +223,8 @@ class Nextial_OA_Admin {
 	 */
 	public static function pro_facts() {
 		global $wpdb;
-		$o     = Nextial_OA_Archiver::archive_table( $wpdb->prefix . 'wc_orders' );
+		$o     = Nextial_OA_Archiver::archive_table( Nextial_OA_Archiver::tables()['orders']['table'] );
+		$c     = Nextial_OA_Archiver::cols();
 		$facts = array( 'archived' => Nextial_OA_Archiver::archived_count(), 'bytes' => 0, 'old2' => 0, 'old10' => 0 );
 		if ( $facts['archived'] > 0 ) {
 			$names = array();
@@ -231,8 +232,8 @@ class Nextial_OA_Admin {
 				$names[] = esc_sql( Nextial_OA_Archiver::archive_table( $t['table'] ) );
 			}
 			$facts['bytes'] = (int) $wpdb->get_var( "SELECT COALESCE(SUM(data_length + index_length),0) FROM information_schema.TABLES WHERE table_schema = DATABASE() AND table_name IN ('" . implode( "','", $names ) . "')" ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-			$facts['old2']  = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$o}` WHERE type = 'shop_order' AND date_created_gmt < %s", gmdate( 'Y-m-d H:i:s', strtotime( '-2 years' ) ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
-			$facts['old10'] = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$o}` WHERE type = 'shop_order' AND date_created_gmt < %s", gmdate( 'Y-m-d H:i:s', strtotime( '-10 years' ) ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$facts['old2']  = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$o}` WHERE {$c['type']} = 'shop_order' AND {$c['date']} < %s", gmdate( 'Y-m-d H:i:s', strtotime( '-2 years' ) ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$facts['old10'] = (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$o}` WHERE {$c['type']} = 'shop_order' AND {$c['date']} < %s", gmdate( 'Y-m-d H:i:s', strtotime( '-10 years' ) ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		}
 		return $facts;
 	}

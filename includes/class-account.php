@@ -88,7 +88,7 @@ class Nextial_OA_Account {
 
 	private static function archive_ready() {
 		global $wpdb;
-		$o = self::t( 'wc_orders' );
+		$o = Nextial_OA_Archiver::is_legacy() ? Nextial_OA_Archiver::archive_table( $wpdb->posts ) : self::t( 'wc_orders' );
 		return $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $o ) ) === $o;
 	}
 
@@ -97,6 +97,11 @@ class Nextial_OA_Account {
 		$user_id = (int) $user_id;
 		if ( $user_id <= 0 || ! self::archive_ready() ) {
 			return 0;
+		}
+		if ( Nextial_OA_Archiver::is_legacy() ) {
+			$p  = Nextial_OA_Archiver::archive_table( $wpdb->posts );
+			$pm = Nextial_OA_Archiver::archive_table( $wpdb->postmeta );
+			return (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$p}` p JOIN `{$pm}` cu ON cu.post_id = p.ID AND cu.meta_key = '_customer_user' AND cu.meta_value = %s WHERE p.post_type = 'shop_order'", (string) $user_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		}
 		$o = self::t( 'wc_orders' );
 		return (int) $wpdb->get_var( $wpdb->prepare( "SELECT COUNT(*) FROM `{$o}` WHERE type = 'shop_order' AND customer_id = %d", $user_id ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
@@ -111,6 +116,19 @@ class Nextial_OA_Account {
 		global $wpdb;
 		if ( ! self::archive_ready() ) {
 			return array();
+		}
+		if ( Nextial_OA_Archiver::is_legacy() ) {
+			$p  = Nextial_OA_Archiver::archive_table( $wpdb->posts );
+			$pm = Nextial_OA_Archiver::archive_table( $wpdb->postmeta );
+			return $wpdb->get_results(
+				$wpdb->prepare(
+					"SELECT p.ID AS id, p.post_status AS status, cur.meta_value AS currency, tot.meta_value AS total_amount, p.post_date_gmt AS date_created_gmt FROM `{$p}` p JOIN `{$pm}` cu ON cu.post_id = p.ID AND cu.meta_key = '_customer_user' AND cu.meta_value = %s LEFT JOIN `{$pm}` cur ON cur.post_id = p.ID AND cur.meta_key = '_order_currency' LEFT JOIN `{$pm}` tot ON tot.post_id = p.ID AND tot.meta_key = '_order_total' WHERE p.post_type = 'shop_order' ORDER BY p.post_date_gmt DESC, p.ID DESC LIMIT %d OFFSET %d", // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+					(string) (int) $user_id,
+					(int) $per_page,
+					max( 0, ( (int) $page - 1 ) * (int) $per_page )
+				),
+				ARRAY_A
+			);
 		}
 		$o = self::t( 'wc_orders' );
 		return $wpdb->get_results(
@@ -136,8 +154,15 @@ class Nextial_OA_Account {
 		if ( $user_id <= 0 || $order_id <= 0 || ! self::archive_ready() ) {
 			return null;
 		}
+		$legacy = null;
+		if ( Nextial_OA_Archiver::is_legacy() ) {
+			$legacy = Nextial_OA_Archiver::legacy_archived_order( $order_id );
+			if ( ! $legacy || 'shop_order' !== $legacy['order']['type'] || $legacy['order']['customer_id'] !== $user_id ) {
+				return null;
+			}
+		}
 		$o     = self::t( 'wc_orders' );
-		$order = $wpdb->get_row( $wpdb->prepare( "SELECT * FROM `{$o}` WHERE id = %d AND type = 'shop_order' AND customer_id = %d", $order_id, $user_id ), ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+		$order = $legacy ? $legacy['order'] : $wpdb->get_row( $wpdb->prepare( "SELECT * FROM `{$o}` WHERE id = %d AND type = 'shop_order' AND customer_id = %d", $order_id, $user_id ), ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		if ( ! $order ) {
 			return null;
 		}
@@ -163,6 +188,16 @@ class Nextial_OA_Account {
 					'total' => (float) ( $m['cost'] ?? ( $m['_line_total'] ?? 0 ) ),
 				);
 			}
+		}
+		if ( $legacy ) {
+			return array(
+				'order'     => $order,
+				'items'     => $items,
+				'fees'      => $fees,
+				'addresses' => $legacy['addresses'],
+				'refunded'  => $legacy['refunded'],
+				'discount'  => $legacy['discount'],
+			);
 		}
 		$addresses = array();
 		foreach ( $wpdb->get_results( $wpdb->prepare( "SELECT * FROM `{$addr_t}` WHERE order_id = %d", $order_id ), ARRAY_A ) as $a ) { // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
