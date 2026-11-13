@@ -10,6 +10,11 @@
  * are counted against the originals, and only then are the originals
  * deleted. Any difference rolls the whole batch back.
  *
+ * Shops on the classic storage (HPOS off) have the same engine on wp_posts
+ * and wp_postmeta (mirrors nxoa_posts / nxoa_postmeta). That support stays
+ * behind the "nextial_oa_legacy_storage" filter until the panel, the
+ * customer view and the privacy tools read the classic archive too.
+ *
  * Analytics tables (wc_order_stats and the lookup tables) are left alone,
  * so WooCommerce reports keep their history. The placeholder posts that HPOS
  * keeps in wp_posts are also left alone: they reserve the order IDs, so a
@@ -35,6 +40,16 @@ class Nextial_OA_Archiver {
 	 */
 	public static function tables() {
 		global $wpdb;
+		if ( self::is_legacy() ) {
+			return array(
+				'orders'   => array( 'table' => $wpdb->posts, 'key' => 'ID', 'where' => "post_type IN ('shop_order','shop_order_refund')" ),
+				'meta'     => array( 'table' => $wpdb->postmeta, 'key' => 'post_id' ),
+				'items'    => array( 'table' => $wpdb->prefix . 'woocommerce_order_items', 'key' => 'order_id' ),
+				'itemmeta' => array( 'table' => $wpdb->prefix . 'woocommerce_order_itemmeta', 'key' => 'order_item_id', 'via' => 'items' ),
+				'notes'    => array( 'table' => $wpdb->comments, 'key' => 'comment_post_ID', 'where' => "comment_type = 'order_note'" ),
+				'notemeta' => array( 'table' => $wpdb->commentmeta, 'key' => 'comment_id', 'via' => 'notes' ),
+			);
+		}
 		return array(
 			'orders'      => array( 'table' => $wpdb->prefix . 'wc_orders', 'key' => 'id' ),
 			'addresses'   => array( 'table' => $wpdb->prefix . 'wc_order_addresses', 'key' => 'order_id' ),
@@ -52,6 +67,53 @@ class Nextial_OA_Archiver {
 		return $wpdb->prefix . self::ARCHIVE_PREFIX . substr( $live, strlen( $wpdb->prefix ) );
 	}
 
+	/**
+	 * Does this shop keep its orders in the classic posts tables
+	 * (wp_posts / wp_postmeta) instead of HPOS?
+	 */
+	public static function is_legacy() {
+		return class_exists( '\Automattic\WooCommerce\Utilities\OrderUtil' ) && ! \Automattic\WooCommerce\Utilities\OrderUtil::custom_orders_table_usage_is_enabled();
+	}
+
+	/**
+	 * Support for the classic posts storage. Off until every part of the
+	 * plugin (panel, customer view, privacy tools) reads that storage too.
+	 */
+	public static function legacy_enabled() {
+		/**
+		 * Allow archiving on shops without HPOS (classic posts storage).
+		 *
+		 * @param bool $enabled Default false.
+		 */
+		return (bool) apply_filters( 'nextial_oa_legacy_storage', false );
+	}
+
+	/**
+	 * Column names of the orders table in the current storage.
+	 *
+	 * @return array{id:string, type:string, status:string, date:string, parent:string, meta_key:string}
+	 */
+	public static function cols() {
+		if ( self::is_legacy() ) {
+			return array( 'id' => 'ID', 'type' => 'post_type', 'status' => 'post_status', 'date' => 'post_date_gmt', 'parent' => 'post_parent', 'meta_key' => 'post_id' );
+		}
+		return array( 'id' => 'id', 'type' => 'type', 'status' => 'status', 'date' => 'date_created_gmt', 'parent' => 'parent_order_id', 'meta_key' => 'order_id' );
+	}
+
+	/**
+	 * Archived orders kept in the other storage (HPOS vs classic), if any.
+	 * Moving is refused then: they must go back with the storage they came from.
+	 */
+	public static function other_storage_count() {
+		global $wpdb;
+		$legacy = self::is_legacy();
+		$tbl    = self::archive_table( $legacy ? $wpdb->prefix . 'wc_orders' : $wpdb->posts );
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $tbl ) ) !== $tbl ) {
+			return 0;
+		}
+		return (int) $wpdb->get_var( $legacy ? "SELECT COUNT(*) FROM `{$tbl}` WHERE type = 'shop_order'" : "SELECT COUNT(*) FROM `{$tbl}` WHERE post_type = 'shop_order'" );
+	}
+
 	/* ------------------------------------------------------------------ */
 	/* Preconditions                                                       */
 	/* ------------------------------------------------------------------ */
@@ -66,11 +128,16 @@ class Nextial_OA_Archiver {
 		if ( ! class_exists( 'WooCommerce' ) || ! function_exists( 'wc_get_container' ) ) {
 			return __( 'WooCommerce is not active.', 'nextial-order-archive' );
 		}
-		if ( ! class_exists( '\Automattic\WooCommerce\Utilities\OrderUtil' ) || ! \Automattic\WooCommerce\Utilities\OrderUtil::custom_orders_table_usage_is_enabled() ) {
+		if ( ! class_exists( '\Automattic\WooCommerce\Utilities\OrderUtil' ) || ( self::is_legacy() && ! self::legacy_enabled() ) ) {
 			return __( 'This plugin needs High-Performance Order Storage (HPOS). Turn it on in WooCommerce → Settings → Advanced → Features.', 'nextial-order-archive' );
 		}
 		if ( 'yes' === get_option( 'woocommerce_custom_orders_table_data_sync_enabled' ) ) {
 			return __( 'Compatibility mode (order data sync with the posts table) is on. Turn it off in WooCommerce → Settings → Advanced → Features before archiving, so orders are stored in one place only.', 'nextial-order-archive' );
+		}
+		if ( self::other_storage_count() > 0 ) {
+			return self::is_legacy()
+				? __( 'Some orders were archived while High-Performance Order Storage (HPOS) was on. Turn HPOS back on and restore them before archiving with the classic storage.', 'nextial-order-archive' )
+				: __( 'Some orders were archived while the shop used the classic posts storage. Switch back to it and restore them before archiving with HPOS.', 'nextial-order-archive' );
 		}
 		foreach ( self::tables() as $t ) {
 			if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $t['table'] ) ) !== $t['table'] ) {
@@ -119,7 +186,8 @@ class Nextial_OA_Archiver {
 	 */
 	public static function candidates( array $rule, $limit = 50 ) {
 		global $wpdb;
-		$orders   = $wpdb->prefix . 'wc_orders';
+		$orders   = self::tables()['orders']['table'];
+		$c        = self::cols();
 		$statuses = array_values( array_intersect( (array) ( $rule['statuses'] ?? array() ), self::ALLOWED_STATUSES ) );
 		$days     = max( 0, (int) ( $rule['older_than_days'] ?? 365 ) );
 		if ( empty( $statuses ) ) {
@@ -128,12 +196,7 @@ class Nextial_OA_Archiver {
 				'excluded' => array(),
 			);
 		}
-		$wc_statuses = array_map(
-			static function ( $s ) {
-				return 'checkout-draft' === $s ? 'checkout-draft' : 'wc-' . $s;
-			},
-			$statuses
-		);
+		$wc_statuses = self::db_statuses( $statuses );
 		$cutoff   = gmdate( 'Y-m-d H:i:s', time() - $days * DAY_IN_SECONDS );
 		$in       = implode( ',', array_fill( 0, count( $wc_statuses ), '%s' ) );
 		$limit    = max( 1, (int) $limit );
@@ -149,7 +212,7 @@ class Nextial_OA_Archiver {
 		while ( count( $keep ) < $limit && $offset < 100000 ) {
 			$rows = $wpdb->get_results(
 				$wpdb->prepare( // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- $in holds one %s per status; $reason is built from table names and a prepared date.
-					"SELECT o.id, {$reason} AS reason FROM {$orders} o WHERE o.type = 'shop_order' AND o.status IN ({$in}) AND o.date_created_gmt < %s ORDER BY o.date_created_gmt ASC, o.id ASC LIMIT %d OFFSET %d",
+					"SELECT o.{$c['id']} AS id, {$reason} AS reason FROM {$orders} o WHERE o.{$c['type']} = 'shop_order' AND o.{$c['status']} IN ({$in}) AND o.{$c['date']} < %s ORDER BY o.{$c['date']} ASC, o.{$c['id']} ASC LIMIT %d OFFSET %d",
 					array_merge( $wc_statuses, array( $cutoff, $chunk, $offset ) )
 				),
 				ARRAY_A
@@ -177,20 +240,45 @@ class Nextial_OA_Archiver {
 	}
 
 	/**
+	 * Status values as stored in the orders table. Classic storage also
+	 * keeps checkout drafts with the "wc-" prefix.
+	 *
+	 * @param string[] $statuses Statuses without prefix.
+	 * @return string[]
+	 */
+	private static function db_statuses( array $statuses ) {
+		$out = array();
+		foreach ( $statuses as $s ) {
+			if ( 'checkout-draft' === $s ) {
+				$out[] = 'checkout-draft';
+				if ( self::is_legacy() ) {
+					$out[] = 'wc-checkout-draft';
+				}
+			} else {
+				$out[] = 'wc-' . $s;
+			}
+		}
+		return $out;
+	}
+
+	/**
 	 * The built-in exclusion rules as one SQL expression on alias `o`
 	 * (same order as exclusion_reason()): 'subscription', 'restored',
 	 * 'downloads' or ''. One query for many orders instead of 3–4 per order.
 	 */
 	private static function reason_sql() {
 		global $wpdb;
-		$o    = $wpdb->prefix . 'wc_orders';
-		$m    = $wpdb->prefix . 'wc_orders_meta';
+		$t    = self::tables();
+		$c    = self::cols();
+		$o    = $t['orders']['table'];
+		$m    = $t['meta']['table'];
+		$k    = $c['meta_key'];
 		$perm = $wpdb->prefix . 'woocommerce_downloadable_product_permissions';
-		$sub  = "( EXISTS (SELECT 1 FROM `{$o}` s WHERE s.type = 'shop_subscription' AND s.parent_order_id = o.id) OR EXISTS (SELECT 1 FROM `{$m}` sm WHERE sm.order_id = o.id AND sm.meta_key IN ('_subscription_renewal','_subscription_resubscribe','_subscription_switch')) )";
-		$res  = "EXISTS (SELECT 1 FROM `{$m}` rm WHERE rm.order_id = o.id AND rm.meta_key = '_nextial_oa_restored')";
+		$sub  = "( EXISTS (SELECT 1 FROM `{$o}` s WHERE s.{$c['type']} = 'shop_subscription' AND s.{$c['parent']} = o.{$c['id']}) OR EXISTS (SELECT 1 FROM `{$m}` sm WHERE sm.{$k} = o.{$c['id']} AND sm.meta_key IN ('_subscription_renewal','_subscription_resubscribe','_subscription_switch')) )";
+		$res  = "EXISTS (SELECT 1 FROM `{$m}` rm WHERE rm.{$k} = o.{$c['id']} AND rm.meta_key = '_nextial_oa_restored')";
 		$dl   = '0';
 		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $perm ) ) === $perm ) {
-			$dl = $wpdb->prepare( "EXISTS (SELECT 1 FROM `{$perm}` d WHERE d.order_id = o.id AND ( d.access_expires IS NULL OR d.access_expires > %s ))", gmdate( 'Y-m-d H:i:s' ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+			$dl = $wpdb->prepare( "EXISTS (SELECT 1 FROM `{$perm}` d WHERE d.order_id = o.{$c['id']} AND ( d.access_expires IS NULL OR d.access_expires > %s ))", gmdate( 'Y-m-d H:i:s' ) ); // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
 		}
 		return "CASE WHEN {$sub} THEN 'subscription' WHEN {$res} THEN 'restored' WHEN {$dl} THEN 'downloads' ELSE '' END";
 	}
@@ -212,16 +300,20 @@ class Nextial_OA_Archiver {
 	public static function exclusion_reason( $order_id ) {
 		global $wpdb;
 		$order_id = (int) $order_id;
+		$t        = self::tables();
+		$c        = self::cols();
+		$o        = $t['orders']['table'];
+		$m        = $t['meta']['table'];
 		// Orders linked to WooCommerce Subscriptions (parent or renewal of any subscription).
 		$sub = $wpdb->get_var(
 			$wpdb->prepare(
-				"SELECT COUNT(*) FROM {$wpdb->prefix}wc_orders WHERE type = 'shop_subscription' AND parent_order_id = %d",
+				"SELECT COUNT(*) FROM `{$o}` WHERE {$c['type']} = 'shop_subscription' AND {$c['parent']} = %d",
 				$order_id
 			)
 		);
 		$renew = $wpdb->get_var(
 			$wpdb->prepare(
-				"SELECT COUNT(*) FROM {$wpdb->prefix}wc_orders_meta WHERE order_id = %d AND meta_key IN ('_subscription_renewal','_subscription_resubscribe','_subscription_switch')",
+				"SELECT COUNT(*) FROM `{$m}` WHERE {$c['meta_key']} = %d AND meta_key IN ('_subscription_renewal','_subscription_resubscribe','_subscription_switch')",
 				$order_id
 			)
 		);
@@ -231,7 +323,7 @@ class Nextial_OA_Archiver {
 		// Restored by hand: the shop owner wants it live.
 		$restored = $wpdb->get_var(
 			$wpdb->prepare(
-				"SELECT COUNT(*) FROM {$wpdb->prefix}wc_orders_meta WHERE order_id = %d AND meta_key = '_nextial_oa_restored'",
+				"SELECT COUNT(*) FROM `{$m}` WHERE {$c['meta_key']} = %d AND meta_key = '_nextial_oa_restored'",
 				$order_id
 			)
 		);
@@ -268,7 +360,8 @@ class Nextial_OA_Archiver {
 	 */
 	public static function preview( array $rule ) {
 		global $wpdb;
-		$orders   = $wpdb->prefix . 'wc_orders';
+		$orders   = self::tables()['orders']['table'];
+		$c        = self::cols();
 		$statuses = array_values( array_intersect( (array) ( $rule['statuses'] ?? array() ), self::ALLOWED_STATUSES ) );
 		$out      = array(
 			'total'      => 0,
@@ -283,18 +376,13 @@ class Nextial_OA_Archiver {
 		if ( empty( $statuses ) ) {
 			return $out;
 		}
-		$wc_statuses = array_map(
-			static function ( $s ) {
-				return 'checkout-draft' === $s ? 'checkout-draft' : 'wc-' . $s;
-			},
-			$statuses
-		);
+		$wc_statuses = self::db_statuses( $statuses );
 		$cutoff = gmdate( 'Y-m-d H:i:s', time() - max( 0, (int) ( $rule['older_than_days'] ?? 365 ) ) * DAY_IN_SECONDS );
 		$in     = implode( ',', array_fill( 0, count( $wc_statuses ), '%s' ) );
 		$reason = self::reason_sql();
 		$rows   = $wpdb->get_results(
 			$wpdb->prepare( // phpcs:ignore WordPress.DB.PreparedSQLPlaceholders.ReplacementsWrongNumber, WordPress.DB.PreparedSQL.InterpolatedNotPrepared -- see candidates().
-				"SELECT o.id, {$reason} AS reason FROM {$orders} o WHERE o.type = 'shop_order' AND o.status IN ({$in}) AND o.date_created_gmt < %s ORDER BY o.date_created_gmt ASC LIMIT 20000",
+				"SELECT o.{$c['id']} AS id, {$reason} AS reason FROM {$orders} o WHERE o.{$c['type']} = 'shop_order' AND o.{$c['status']} IN ({$in}) AND o.{$c['date']} < %s ORDER BY o.{$c['date']} ASC LIMIT 20000",
 				array_merge( $wc_statuses, array( $cutoff ) )
 			),
 			ARRAY_A
@@ -312,7 +400,7 @@ class Nextial_OA_Archiver {
 		}
 		if ( $ids ) {
 			$range         = $wpdb->get_row(
-				$wpdb->prepare( "SELECT MIN(date_created_gmt) AS a, MAX(date_created_gmt) AS b FROM {$orders} WHERE type = 'shop_order' AND status IN ({$in}) AND date_created_gmt < %s", array_merge( $wc_statuses, array( $cutoff ) ) ),
+				$wpdb->prepare( "SELECT MIN({$c['date']}) AS a, MAX({$c['date']}) AS b FROM {$orders} WHERE {$c['type']} = 'shop_order' AND {$c['status']} IN ({$in}) AND {$c['date']} < %s", array_merge( $wc_statuses, array( $cutoff ) ) ),
 				ARRAY_A
 			);
 			$out['oldest'] = $range['a'];
@@ -372,6 +460,7 @@ class Nextial_OA_Archiver {
 			return array( 'ok' => true, 'moved' => 0, 'error' => '' );
 		}
 		$t = self::tables();
+		$c = self::cols();
 
 		// Source and destination per table.
 		$src = array();
@@ -385,17 +474,17 @@ class Nextial_OA_Archiver {
 
 		// Add child refunds.
 		$ids_sql = implode( ',', $order_ids );
-		$refunds = array_map( 'intval', $wpdb->get_col( "SELECT id FROM `{$src['orders']}` WHERE type = 'shop_order_refund' AND parent_order_id IN ({$ids_sql})" ) );
+		$refunds = array_map( 'intval', $wpdb->get_col( "SELECT {$c['id']} FROM `{$src['orders']}` WHERE {$c['type']} = 'shop_order_refund' AND {$c['parent']} IN ({$ids_sql})" ) );
 		$all     = array_values( array_unique( array_merge( $order_ids, $refunds ) ) );
 		$all_sql = implode( ',', $all );
 
 		// Only orders that really are in the source.
-		$found = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$src['orders']}` WHERE id IN ({$ids_sql}) AND type = 'shop_order'" );
+		$found = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$src['orders']}` WHERE {$c['id']} IN ({$ids_sql}) AND {$c['type']} = 'shop_order'" );
 		if ( $found !== count( $order_ids ) ) {
 			return array( 'ok' => false, 'moved' => 0, 'error' => 'archive' === $direction ? 'Some orders are no longer in the live tables.' : 'Some orders are not in the archive.' );
 		}
 		// Never overwrite: none of these IDs may exist in the destination.
-		$clash = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$dst['orders']}` WHERE id IN ({$all_sql})" );
+		$clash = (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$dst['orders']}` WHERE {$c['id']} IN ({$all_sql})" );
 		if ( $clash > 0 ) {
 			return array( 'ok' => false, 'moved' => 0, 'error' => 'Some order IDs already exist in the destination tables; nothing was moved.' );
 		}
@@ -434,9 +523,9 @@ class Nextial_OA_Archiver {
 			// Remember the restore, so automatic runs do not archive it again.
 			foreach ( $order_ids as $id ) {
 				$wpdb->insert(
-					$wpdb->prefix . 'wc_orders_meta',
+					$t['meta']['table'],
 					array(
-						'order_id'   => $id,
+						$c['meta_key'] => $id,
 						'meta_key'   => '_nextial_oa_restored', // phpcs:ignore WordPress.DB.SlowDBQuery
 						'meta_value' => (string) time(), // phpcs:ignore WordPress.DB.SlowDBQuery
 					)
@@ -473,7 +562,7 @@ class Nextial_OA_Archiver {
 				return $err;
 			}
 		}
-		foreach ( array( 'itemmeta', 'notemeta', 'items', 'notes', 'meta', 'addresses', 'operational', 'orders' ) as $k ) {
+		foreach ( array_intersect( array( 'itemmeta', 'notemeta', 'items', 'notes', 'meta', 'addresses', 'operational', 'orders' ), array_keys( $t ) ) as $k ) {
 			$res = $wpdb->query( "DELETE FROM `{$src[ $k ]}` WHERE {$where[ $k ]}" );
 			if ( false === $res || (int) $res !== $counts[ $k ] ) {
 				$err = sprintf( 'Delete check failed for %s (expected %d rows, deleted %s). %s', $k, $counts[ $k ], var_export( $res, true ), $wpdb->last_error ); // phpcs:ignore WordPress.PHP.DevelopmentFunctions
@@ -504,11 +593,12 @@ class Nextial_OA_Archiver {
 
 	public static function archived_count() {
 		global $wpdb;
-		$a = self::archive_table( $wpdb->prefix . 'wc_orders' );
+		$a = self::archive_table( self::tables()['orders']['table'] );
+		$c = self::cols();
 		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $a ) ) !== $a ) {
 			return 0;
 		}
-		return (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$a}` WHERE type = 'shop_order'" );
+		return (int) $wpdb->get_var( "SELECT COUNT(*) FROM `{$a}` WHERE {$c['type']} = 'shop_order'" );
 	}
 
 	/**
@@ -518,23 +608,20 @@ class Nextial_OA_Archiver {
 	 */
 	public static function search_archived( $term, $limit = 50 ) {
 		global $wpdb;
-		$o = self::archive_table( $wpdb->prefix . 'wc_orders' );
-		$a = self::archive_table( $wpdb->prefix . 'wc_order_addresses' );
-		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $o ) ) !== $o ) {
+		$q = self::archived_query();
+		if ( ! $q ) {
 			return array();
 		}
 		$term  = trim( (string) $term );
 		$limit = max( 1, min( 200, (int) $limit ) );
-		$sql   = "SELECT o.id, o.status, o.total_amount, o.currency, o.date_created_gmt, o.billing_email, ba.first_name, ba.last_name
-			FROM `{$o}` o LEFT JOIN `{$a}` ba ON ba.order_id = o.id AND ba.address_type = 'billing'
-			WHERE o.type = 'shop_order'";
+		$sql   = "SELECT {$q['fields']} FROM {$q['from']} WHERE {$q['type']}";
 		if ( '' === $term ) {
-			return $wpdb->get_results( $wpdb->prepare( $sql . ' ORDER BY o.date_created_gmt DESC LIMIT %d', $limit ), ARRAY_A );
+			return $wpdb->get_results( $wpdb->prepare( $sql . " ORDER BY {$q['date']} DESC LIMIT %d", $limit ), ARRAY_A ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 		}
 		$like = '%' . $wpdb->esc_like( $term ) . '%';
 		return $wpdb->get_results(
 			$wpdb->prepare(
-				$sql . ' AND ( o.id = %d OR o.billing_email LIKE %s OR ba.first_name LIKE %s OR ba.last_name LIKE %s OR CONCAT(ba.first_name, \' \', ba.last_name) LIKE %s ) ORDER BY o.date_created_gmt DESC LIMIT %d',
+				$sql . " AND {$q['match']} ORDER BY {$q['date']} DESC LIMIT %d", // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 				ctype_digit( ltrim( $term, '#' ) ) ? (int) ltrim( $term, '#' ) : 0,
 				$like,
 				$like,
@@ -543,6 +630,49 @@ class Nextial_OA_Archiver {
 				$limit
 			),
 			ARRAY_A
+		);
+	}
+
+	/**
+	 * SQL pieces to list and search archived orders in the current storage,
+	 * or null when there is no archive yet. "match" takes 5 placeholders:
+	 * order ID, then the same LIKE pattern 4 times.
+	 *
+	 * @return array{fields:string, from:string, type:string, id:string, date:string, match:string}|null
+	 */
+	private static function archived_query() {
+		global $wpdb;
+		if ( self::is_legacy() ) {
+			$p  = self::archive_table( $wpdb->posts );
+			$pm = self::archive_table( $wpdb->postmeta );
+			if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $p ) ) !== $p ) {
+				return null;
+			}
+			$from = "`{$p}` o";
+			foreach ( array( 'em' => '_billing_email', 'fn' => '_billing_first_name', 'ln' => '_billing_last_name', 'tot' => '_order_total', 'cur' => '_order_currency' ) as $alias => $key ) {
+				$from .= " LEFT JOIN `{$pm}` {$alias} ON {$alias}.post_id = o.ID AND {$alias}.meta_key = '{$key}'";
+			}
+			return array(
+				'fields' => 'o.ID AS id, o.post_status AS status, tot.meta_value AS total_amount, cur.meta_value AS currency, o.post_date_gmt AS date_created_gmt, em.meta_value AS billing_email, fn.meta_value AS first_name, ln.meta_value AS last_name',
+				'from'   => $from,
+				'type'   => "o.post_type = 'shop_order'",
+				'id'     => 'o.ID',
+				'date'   => 'o.post_date_gmt',
+				'match'  => "( o.ID = %d OR em.meta_value LIKE %s OR fn.meta_value LIKE %s OR ln.meta_value LIKE %s OR CONCAT(fn.meta_value, ' ', ln.meta_value) LIKE %s )",
+			);
+		}
+		$o = self::archive_table( $wpdb->prefix . 'wc_orders' );
+		$a = self::archive_table( $wpdb->prefix . 'wc_order_addresses' );
+		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $o ) ) !== $o ) {
+			return null;
+		}
+		return array(
+			'fields' => 'o.id, o.status, o.total_amount, o.currency, o.date_created_gmt, o.billing_email, ba.first_name, ba.last_name',
+			'from'   => "`{$o}` o LEFT JOIN `{$a}` ba ON ba.order_id = o.id AND ba.address_type = 'billing'",
+			'type'   => "o.type = 'shop_order'",
+			'id'     => 'o.id',
+			'date'   => 'o.date_created_gmt',
+			'match'  => "( o.id = %d OR o.billing_email LIKE %s OR ba.first_name LIKE %s OR ba.last_name LIKE %s OR CONCAT(ba.first_name, ' ', ba.last_name) LIKE %s )",
 		);
 	}
 
@@ -557,27 +687,26 @@ class Nextial_OA_Archiver {
 	 */
 	public static function archived_ids( $term, $limit = 50, array $exclude = array() ) {
 		global $wpdb;
-		$o = self::archive_table( $wpdb->prefix . 'wc_orders' );
-		$a = self::archive_table( $wpdb->prefix . 'wc_order_addresses' );
-		if ( $wpdb->get_var( $wpdb->prepare( 'SHOW TABLES LIKE %s', $o ) ) !== $o ) {
+		$q = self::archived_query();
+		if ( ! $q ) {
 			return array();
 		}
 		$term    = trim( (string) $term );
 		$limit   = max( 1, min( 500, (int) $limit ) );
 		$exclude = array_values( array_filter( array_map( 'intval', $exclude ) ) );
-		$sql     = "SELECT o.id FROM `{$o}` o LEFT JOIN `{$a}` ba ON ba.order_id = o.id AND ba.address_type = 'billing' WHERE o.type = 'shop_order'";
+		$sql     = "SELECT {$q['id']} FROM {$q['from']} WHERE {$q['type']}";
 		if ( $exclude ) {
-			$sql .= ' AND o.id NOT IN (' . implode( ',', $exclude ) . ')';
+			$sql .= " AND {$q['id']} NOT IN (" . implode( ',', $exclude ) . ')';
 		}
 		if ( '' === $term ) {
-			return array_map( 'intval', $wpdb->get_col( $wpdb->prepare( $sql . ' ORDER BY o.date_created_gmt DESC, o.id DESC LIMIT %d', $limit ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+			return array_map( 'intval', $wpdb->get_col( $wpdb->prepare( $sql . " ORDER BY {$q['date']} DESC, {$q['id']} DESC LIMIT %d", $limit ) ) ); // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 		}
 		$like = '%' . $wpdb->esc_like( $term ) . '%';
 		return array_map(
 			'intval',
 			$wpdb->get_col(
 				$wpdb->prepare(
-					$sql . ' AND ( o.id = %d OR o.billing_email LIKE %s OR ba.first_name LIKE %s OR ba.last_name LIKE %s OR CONCAT(ba.first_name, \' \', ba.last_name) LIKE %s ) ORDER BY o.date_created_gmt DESC, o.id DESC LIMIT %d', // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
+					$sql . " AND {$q['match']} ORDER BY {$q['date']} DESC, {$q['id']} DESC LIMIT %d", // phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared
 					ctype_digit( ltrim( $term, '#' ) ) ? (int) ltrim( $term, '#' ) : 0,
 					$like,
 					$like,
@@ -647,7 +776,7 @@ class Nextial_OA_Archiver {
 			} elseif ( 'notemeta' === $k ) {
 				$w = "`comment_id` IN (SELECT comment_ID FROM `{$notes}` WHERE comment_type = 'order_note' AND comment_post_ID = {$order_id})";
 			} elseif ( 'meta' === $k ) {
-				$w = "`order_id` = {$order_id} AND meta_key <> '_nextial_oa_restored'";
+				$w = "`{$def['key']}` = {$order_id} AND meta_key <> '_nextial_oa_restored'";
 			} else {
 				$w = "`{$def['key']}` = {$order_id}" . ( isset( $def['where'] ) ? ' AND ' . $def['where'] : '' );
 			}
