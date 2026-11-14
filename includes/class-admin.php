@@ -44,8 +44,11 @@ class Nextial_OA_Admin {
 	/** On the WooCommerce Orders screen, say where archived orders are. */
 	public static function orders_screen_notice() {
 		$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
-		if ( ! $screen || ! current_user_can( self::cap() ) || false === strpos( (string) $screen->id, 'wc-orders' ) ) {
+		if ( ! Nextial_OA_Orders_Search::on_orders_screen( $screen ) || ! current_user_can( self::cap() ) ) {
 			return;
+		}
+		if ( ! empty( $_GET['s'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only.
+			return; // The search results box says it already.
 		}
 		$n = Nextial_OA_Archiver::archived_count();
 		if ( $n < 1 ) {
@@ -54,7 +57,7 @@ class Nextial_OA_Admin {
 		echo '<div class="notice notice-info"><p>' . esc_html(
 			sprintf(
 				/* translators: %d: number of archived orders */
-				_n( '%d older order is in the archive and not listed here.', '%d older orders are in the archive and not listed here.', $n, 'nextial-order-archive' ),
+				_n( '%d older order is in the archive and not listed here. Searching here also looks in the archive.', '%d older orders are in the archive and not listed here. Searching here also looks in the archive.', $n, 'nextial-order-archive' ),
 				$n
 			)
 		) . ' <a href="' . esc_url( self::page_url() ) . '#archived">' . esc_html__( 'Search the archive', 'nextial-order-archive' ) . '</a></p></div>';

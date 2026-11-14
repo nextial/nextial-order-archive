@@ -4,7 +4,7 @@ Tags: archive orders, old orders, hpos, database cleanup, wp_postmeta
 Requires at least: 6.5
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.2.0
+Stable tag: 0.3.0
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -24,7 +24,7 @@ https://youtu.be/QfCGkjeeZkA
 * **Preview first**: see how many orders match, and which ones stay live, before anything moves.
 * **Background batches**: Action Scheduler moves small batches one after another, so the store never slows down. Stop at any time.
 * **Automatic**: optionally run the rule every night.
-* **Search the archive** by order number, e-mail or customer name.
+* **Search the archive** by order number, e-mail or customer name – also from the normal WooCommerce → Orders search: archived matches appear above the list with a "Restore to Orders" button that brings the order back and opens it. Staff never need to know where an order is.
 * **Customers still see their old orders**: an "Archived orders" tab in My Account lists them, read-only, with items, totals, refunds and addresses. Only the customer's own orders, and only if they have any. You can switch it off.
 * **Restore in one click, or in bulk**: tick the orders you want back, or restore every order matching your search (or the whole archive) in background batches. Orders come back with the same ID, items, notes and refunds, and a restored order is never archived again automatically.
 * **Reports keep their history**: WooCommerce Analytics tables are not touched.
@@ -92,9 +92,12 @@ Each batch runs in one database transaction and every row count is checked befor
 1. Settings and the Pro box: rules, preview and archived orders list.
 2. "Archived orders" tab in the customer's My Account page.
 3. Archived order detail in My Account (read-only).
-4. Pro: archived orders found by the normal WooCommerce order search.
+4. Archived orders found by the normal WooCommerce order search.
 
 == Changelog ==
+
+= 0.3.0 =
+* New, free: the normal search on WooCommerce → Orders also finds archived orders (by order number, e-mail or name), with a "Restore to Orders" button that brings the order back and opens it. Works with HPOS and the classic storage. Before, this was only in Order Archive Pro.
 
 = 0.2.0 =
 * New: works on shops without HPOS (classic storage in wp_posts / wp_postmeta), the most requested case for big old stores. Archive, preview, search, bulk restore, the customer "Archived orders" tab and the privacy tools all work there.
