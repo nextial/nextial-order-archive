@@ -63,6 +63,10 @@ Yes, since 0.2.0. On the classic storage orders are archived out of wp_posts, wp
 
 Yes, from WooCommerce → Order Archive → Archived orders → Restore. It returns with the same ID and all its data.
 
+= What happens to product stock when I archive or restore an order? =
+
+Nothing: stock is not touched. Archiving and restoring move the order's rows between tables; the order keeps its status, and no status change or stock event is fired, so WooCommerce does not reduce or increase stock again. Tested on HPOS and classic storage (stock identical before archiving, after archiving and after restoring).
+
 = Can I restore many orders at once? =
 
 Yes, free: tick several orders and press "Restore selected", or press "Restore all … archived orders" (with a search term: all the orders that match) and they come back in small background batches, like archiving. If one order cannot come back — for example its ID is taken by a new order — it is skipped and listed, and the others still return.
