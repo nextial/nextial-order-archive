@@ -62,6 +62,51 @@ class Nextial_OA_Runner {
 		}
 	}
 
+	/**
+	 * Is the background work on time? Action Scheduler only runs when
+	 * WP-Cron (or a server cron) runs: if it stops, the nightly run and the
+	 * batches stay "past-due" and nothing tells the shop.
+	 *
+	 * @return array{next:int|null,late:int,due:int|null,what:string}
+	 *               next: next nightly run (timestamp) when automatic is on;
+	 *               late: seconds past due (0 = on time); due: when it was due;
+	 *               what: 'batch' (a started run is stuck) or 'daily'.
+	 */
+	public static function health() {
+		$out = array(
+			'next' => null,
+			'late' => 0,
+			'due'  => null,
+			'what' => '',
+		);
+		if ( ! function_exists( 'as_next_scheduled_action' ) ) {
+			return $out;
+		}
+		$now   = time();
+		$grace = max( 600, (int) apply_filters( 'nextial_oa_late_after', 2 * HOUR_IN_SECONDS ) );
+		$run   = self::run();
+		if ( $run && 'running' === $run['status'] ) {
+			$b = as_next_scheduled_action( self::HOOK_BATCH, array(), self::GROUP );
+			if ( is_int( $b ) && $b < $now - $grace ) {
+				$out['late'] = $now - $b;
+				$out['due']  = $b;
+				$out['what'] = 'batch';
+			}
+		}
+		if ( self::rule()['auto'] ) {
+			$d = as_next_scheduled_action( self::HOOK_DAILY, array(), self::GROUP );
+			if ( is_int( $d ) ) {
+				$out['next'] = $d;
+				if ( ! $out['late'] && $d < $now - $grace ) {
+					$out['late'] = $now - $d;
+					$out['due']  = $d;
+					$out['what'] = 'daily';
+				}
+			}
+		}
+		return $out;
+	}
+
 	/** Current run state, or null. */
 	public static function run() {
 		$r = get_option( self::OPT_RUN, null );

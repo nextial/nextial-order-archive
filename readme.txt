@@ -4,7 +4,7 @@ Tags: archive orders, old orders, hpos, database cleanup, wp_postmeta
 Requires at least: 6.5
 Tested up to: 7.1
 Requires PHP: 7.4
-Stable tag: 0.3.0
+Stable tag: 0.3.1
 License: GPLv2 or later
 License URI: https://www.gnu.org/licenses/gpl-2.0.html
 
@@ -87,6 +87,9 @@ Yes. From 0.1.1 an "Archived orders" tab appears in the customer's My Account pa
 
 Archived orders are included. WordPress → Tools → Export Personal Data adds a section "Archived orders" with the order, its items and the addresses. Tools → Erase Personal Data anonymises archived orders exactly when WooCommerce would anonymise live ones: only if "Remove personal data from orders on request" is on in WooCommerce → Settings → Accounts & Privacy. Totals, items, dates and country stay, so reports and accounting still add up.
 
+= How do I know the nightly run really happens? =
+The Order Archive page shows the next automatic run. If WP-Cron stops (a common cause of "past-due" scheduled actions), the run cannot start: after 2 hours you get a warning on the Order Archive page and on WooCommerce → Orders, with a link to the past-due actions in Tools → Scheduled Actions.
+
 = Is it safe on a big store? =
 
 Each batch runs in one database transaction and every row count is checked before the live rows are removed; if anything differs, the batch is rolled back. Use the preview first and make a database backup before the first run.
@@ -99,6 +102,10 @@ Each batch runs in one database transaction and every row count is checked befor
 4. Archived orders found by the normal WooCommerce order search.
 
 == Changelog ==
+
+= 0.3.1 =
+* New: the Order Archive page shows when the next automatic (nightly) run is due.
+* New: a warning on the Order Archive page and on WooCommerce → Orders when the nightly run or a started run is more than 2 hours late. This happens when WP-Cron is not running (for example DISABLE_WP_CRON without a real server cron): the background tasks stay "past-due" and nothing would tell you. The warning links to the past-due actions in Tools → Scheduled Actions. Filter `nextial_oa_late_after` changes the 2 hours.
 
 = 0.3.0 =
 * New, free: the normal search on WooCommerce → Orders also finds archived orders (by order number, e-mail or name), with a "Restore to Orders" button that brings the order back and opens it. Works with HPOS and the classic storage. Before, this was only in Order Archive Pro.

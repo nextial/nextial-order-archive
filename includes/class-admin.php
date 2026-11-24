@@ -41,12 +41,51 @@ class Nextial_OA_Admin {
 		return $links;
 	}
 
+	/** Warning text when background work is past due, or ''. */
+	public static function late_message( array $h ) {
+		if ( empty( $h['late'] ) ) {
+			return '';
+		}
+		$due = wp_date( get_option( 'date_format' ) . ' ' . get_option( 'time_format' ), (int) $h['due'] );
+		$ago = human_time_diff( (int) $h['due'], time() );
+		if ( 'batch' === $h['what'] ) {
+			/* translators: 1: date and time, 2: time ago (e.g. "5 hours") */
+			$msg = sprintf( __( 'Order Archive: the archiving run has been waiting since %1$s (%2$s) and is not moving.', 'nextial-order-archive' ), $due, $ago );
+		} else {
+			/* translators: 1: date and time, 2: time ago (e.g. "5 hours") */
+			$msg = sprintf( __( 'Order Archive: the nightly run was due on %1$s (%2$s ago) and has not started.', 'nextial-order-archive' ), $due, $ago );
+		}
+		return $msg . ' ' . __( 'Background tasks run only when WP-Cron runs: check that WP-Cron is not turned off (DISABLE_WP_CRON) without a real server cron, then look for past-due actions in Tools → Scheduled Actions.', 'nextial-order-archive' );
+	}
+
+	/** Link to the past-due actions of this plugin in Tools → Scheduled Actions. */
+	public static function scheduled_actions_url() {
+		return add_query_arg(
+			array(
+				'page'   => 'wc-status',
+				'tab'    => 'action-scheduler',
+				'status' => 'past-due',
+				's'      => 'nextial_oa',
+			),
+			admin_url( 'admin.php' )
+		);
+	}
+
+	private static function late_notice( $inline = false ) {
+		$msg = self::late_message( Nextial_OA_Runner::health() );
+		if ( '' === $msg ) {
+			return;
+		}
+		echo '<div class="notice notice-warning' . ( $inline ? ' inline' : '' ) . '" id="nxoa-late"><p>' . esc_html( $msg ) . ' <a href="' . esc_url( self::scheduled_actions_url() ) . '">' . esc_html__( 'See past-due actions', 'nextial-order-archive' ) . '</a></p></div>';
+	}
+
 	/** On the WooCommerce Orders screen, say where archived orders are. */
 	public static function orders_screen_notice() {
 		$screen = function_exists( 'get_current_screen' ) ? get_current_screen() : null;
 		if ( ! Nextial_OA_Orders_Search::on_orders_screen( $screen ) || ! current_user_can( self::cap() ) ) {
 			return;
 		}
+		self::late_notice();
 		if ( ! empty( $_GET['s'] ) ) { // phpcs:ignore WordPress.Security.NonceVerification.Recommended -- read-only.
 			return; // The search results box says it already.
 		}
@@ -357,7 +396,17 @@ class Nextial_OA_Admin {
 					</tr>
 					<tr>
 						<th scope="row"><?php esc_html_e( 'Automatic', 'nextial-order-archive' ); ?></th>
-						<td><label><input type="checkbox" name="auto" value="1" <?php checked( $rule['auto'] ); ?>> <?php esc_html_e( 'Run this rule every night at 3:00', 'nextial-order-archive' ); ?></label></td>
+						<td><label><input type="checkbox" name="auto" value="1" <?php checked( $rule['auto'] ); ?>> <?php esc_html_e( 'Run this rule every night at 3:00', 'nextial-order-archive' ); ?></label>
+							<?php $nxoa_health = Nextial_OA_Runner::health(); ?>
+							<?php if ( $nxoa_health['next'] ) : ?>
+								<p class="description" id="nxoa-next">
+									<?php
+									/* translators: %s: date and time */
+									printf( esc_html__( 'Next automatic run: %s.', 'nextial-order-archive' ), esc_html( wp_date( $fmt, (int) $nxoa_health['next'] ) ) );
+									?>
+								</p>
+							<?php endif; ?>
+						</td>
 					</tr>
 					<tr>
 						<th scope="row"><?php esc_html_e( 'Customers', 'nextial-order-archive' ); ?></th>
@@ -391,6 +440,7 @@ class Nextial_OA_Admin {
 			<?php endif; ?>
 
 			<h2><?php esc_html_e( '2. Archive', 'nextial-order-archive' ); ?></h2>
+			<?php self::late_notice( true ); ?>
 			<p><?php esc_html_e( 'Make a database backup before the first run. Each step moves a small batch inside a database transaction and checks every row count before removing anything from the live tables.', 'nextial-order-archive' ); ?></p>
 			<?php if ( $run && 'running' === $run['status'] ) : ?>
 				<p><strong>
